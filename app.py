@@ -223,3 +223,4 @@ cbar.set_label("Normalized Live Bacteria (0-1)", fontsize=16)
 plt.suptitle("Bacteria Population over Time and Antibiotic Concentration", y=0.97, fontsize=22)
 
 st.pyplot(fig, clear_figure=True, use_container_width=True)
+
