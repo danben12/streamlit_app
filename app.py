@@ -539,79 +539,52 @@ def plot_fold_change(vols, initial_bacts, final_bacts, vc_val):
 # ==========================================
 
 def main():
-    # 1. Setup & UI (Runs instantly)
+    # 1. Setup
     configure_page()
     init_session_state()
+    # 2. Render Sidebar & Get Params
     params = render_sidebar()
-
-    # --- FIREWALL BYPASS LOGIC ---
-    if "simulation_started" not in st.session_state:
-        st.session_state.simulation_started = False
-
-    # If we haven't started yet, show the "Start" button and STOP here.
-    if not st.session_state.simulation_started:
-        st.info(f"Ready to simulate {params['n_samples']} droplets.")
-        st.markdown("Click the button below to initialize the model.")
-        
-        if st.button("🚀 Start Simulation", type="primary"):
-            st.session_state.simulation_started = True
-            st.rerun() # Force immediate rerun to enter the simulation block
-        
-        # Stop execution here so no heavy math runs on load
-        st.stop()
-    # -----------------------------
-
-    # 2. Debounce (Only runs if simulation has started and user changes inputs)
+    # 3. Debounce (Wait for user input to settle)
     check_debounce()
-    
-    # 3. Population Logic
+    # 4. Population Logic
     vols, bacts, total_vols = generate_population(params['mean_log10'], params['std_log10'], 
+
                                                   params['n_samples'], params['concentration'])
-    
     n_trimmed = len(total_vols)
     N_occupied = len(vols)
-    
     # Display Stats
     pct = (N_occupied / n_trimmed * 100) if n_trimmed > 0 else 0.0
     st.write(f"**Simulation Stats:** **{n_trimmed}** remain after trimming ($10^3 < V < 10^8$). "
              f"**{N_occupied}** are occupied (**{pct:.2f}%** occupation).")
     st.markdown(f"### Antibiotic Concentration ($A_0$): {params['A0']}")
-
     if N_occupied == 0:
         st.error("No occupied droplets found. Try increasing Concentration or Mean Volume.")
         st.stop()
-        
-    # 4. Pre-Simulation Calculations (Density & Vc)
+    # 5. Pre-Simulation Calculations (Density & Vc)
     df_density, vc_val = calculate_vc_and_density(vols, bacts, params['concentration'])
-    
-    # 5. Run Simulation
+    # 6. Run Simulation
     bin_sums, bin_counts, final_counts, t_eval, bin_edges = run_simulation(
         vols, bacts, (total_vols.min(), total_vols.max()), params
     )
-    
-    # 6. Visualization Tabs
+    # 7. Visualization Tabs
     st.subheader("Results Analysis")
     t1, t2, t3, t4 = st.tabs(["Population Dynamics", "Droplet Distribution", "Initial Density & Vc", "Fold Change"])
-    
     with t1:
         st.markdown("##### Mean Growth curves per volume bin")
         p = plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges)
-        st.bokeh_chart(p, use_container_width=True)
-        
+        streamlit_bokeh(p, use_container_width=True)
     with t2:
         st.markdown("##### Droplet Distribution: Total vs Occupied")
         p = plot_distribution(total_vols, vols)
-        st.bokeh_chart(p, use_container_width=True)
-        
+        streamlit_bokeh(p, use_container_width=True)
     with t3:
         p = plot_initial_density_vc(df_density, vc_val, params['concentration'])
-        st.bokeh_chart(p, use_container_width=True)
-        
+        streamlit_bokeh(p, use_container_width=True)
     with t4:
         st.markdown("##### Biomass Fold Change vs Volume")
         p = plot_fold_change(vols, bacts, final_counts, vc_val)
-        st.bokeh_chart(p, use_container_width=True)
-
+        streamlit_bokeh(p, use_container_width=True)
 if __name__ == "__main__":
     main()
+
 
