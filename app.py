@@ -7,6 +7,9 @@ from bokeh.models import ColumnDataSource, HoverTool, Legend, LegendItem, Span
 from bokeh.palettes import Category10
 from streamlit_bokeh import streamlit_bokeh
 import time
+from scipy.stats import linregress
+from bokeh.layouts import column
+from bokeh.models import Div
 
 # ==========================================
 # 1. PAGE CONFIG & STATE MANAGEMENT
@@ -533,6 +536,73 @@ def plot_fold_change(vols, initial_bacts, final_bacts, vc_val):
     p.add_layout(legend, 'right')
     return p
 
+def plot_n0_vs_volume(df, Vc):
+    """
+    Tab 5: N0 vs Volume with Linear Regression for V >= Vc.
+    """
+    # Create a local copy to avoid modifying the global dataframe
+    plot_df = df.copy()
+    plot_df['DropletID'] = plot_df.index  # Add ID for hover tool
+
+    source = ColumnDataSource(plot_df)
+    
+    # Initialize Figure
+    p = figure(x_axis_type='log', y_axis_type='log',
+               x_axis_label='Volume (μm³)', y_axis_label='Initial Count (N0)', 
+               output_backend="webgl", width=1200, height=800, 
+               tools="pan,wheel_zoom,reset,save")
+
+    # Styling
+    p.xaxis.axis_label_text_font_size = "16pt"
+    p.yaxis.axis_label_text_font_size = "16pt"
+    p.xaxis.major_label_text_font_size = "14pt"
+    p.yaxis.major_label_text_font_size = "14pt"
+
+    # Scatter Plot
+    r_scat = p.scatter('Volume', 'Count', source=source, color='gray', alpha=0.6, size=5,
+                       legend_label='N0 vs. Volume')
+
+    # Hover Tool
+    hover = HoverTool(tooltips=[('Volume', '@Volume{0,0}'), 
+                                ('Count', '@Count'), 
+                                ('ID', '@DropletID')],
+                      renderers=[r_scat])
+    p.add_tools(hover)
+
+    # --- Linear Regression (Only for V >= Vc and Count > 0) ---
+    filtered_df = plot_df[(plot_df['Count'] > 0) & (plot_df['Volume'] >= Vc)]
+    
+    stats_text = "Insufficient data for regression"
+    
+    if len(filtered_df) > 2:
+        x = np.log10(filtered_df['Volume'])
+        y = np.log10(filtered_df['Count'])
+        
+        slope, intercept, r_value, p_value, std_err = linregress(x, y)
+        
+        # Create regression line points across the whole range
+        x_values = np.linspace(plot_df['Volume'].min(), plot_df['Volume'].max(), 100)
+        y_values = 10 ** (intercept + slope * np.log10(x_values))
+        
+        p.line(x_values, y_values, color='red', legend_label='Linear Regression', line_width=3)
+        
+        stats_text = f'<b>Regression (V > Vc):</b><br>y = {slope:.2f}x + {intercept:.2f}<br>R² = {r_value ** 2:.3f}'
+
+    # Legend Styling
+    p.legend.label_text_font_size = "14pt"
+    p.legend.location = "top_left"
+
+    # Stats Div (Info Box)
+    stats_div = Div(text=stats_text, width=400, height=100)
+    stats_div.styles = {
+        'text-align': 'center', 'margin': '10px auto', 'font-size': '14pt',
+        'font-family': 'Arial, sans-serif', 'color': 'black', 
+        'background-color': '#f0f2f6', 'border': '1px solid #ccc', 
+        'padding': '15px', 'border-radius': '10px', 'box-shadow': '2px 2px 5px rgba(0,0,0,0.1)'
+    }
+
+    return column(p, stats_div)
+
 
 # ==========================================
 # 6. MAIN EXECUTION
@@ -542,49 +612,72 @@ def main():
     # 1. Setup
     configure_page()
     init_session_state()
+    
     # 2. Render Sidebar & Get Params
     params = render_sidebar()
-    # 3. Debounce (Wait for user input to settle)
+    
+    # 3. Debounce
     check_debounce()
+    
     # 4. Population Logic
     vols, bacts, total_vols = generate_population(params['mean_log10'], params['std_log10'], 
-
                                                   params['n_samples'], params['concentration'])
+    
     n_trimmed = len(total_vols)
     N_occupied = len(vols)
+    
     # Display Stats
     pct = (N_occupied / n_trimmed * 100) if n_trimmed > 0 else 0.0
     st.write(f"**Simulation Stats:** **{n_trimmed}** remain after trimming ($10^3 < V < 10^8$). "
              f"**{N_occupied}** are occupied (**{pct:.2f}%** occupation).")
     st.markdown(f"### Antibiotic Concentration ($A_0$): {params['A0']}")
+    
     if N_occupied == 0:
         st.error("No occupied droplets found. Try increasing Concentration or Mean Volume.")
         st.stop()
+        
     # 5. Pre-Simulation Calculations (Density & Vc)
     df_density, vc_val = calculate_vc_and_density(vols, bacts, params['concentration'])
+    
     # 6. Run Simulation
     bin_sums, bin_counts, final_counts, t_eval, bin_edges = run_simulation(
         vols, bacts, (total_vols.min(), total_vols.max()), params
     )
+    
     # 7. Visualization Tabs
     st.subheader("Results Analysis")
-    t1, t2, t3, t4 = st.tabs(["Population Dynamics", "Droplet Distribution", "Initial Density & Vc", "Fold Change"])
+    
+    # --- UPDATE: Added "Scaling Law" to the tabs list ---
+    t1, t2, t3, t4, t5 = st.tabs(["Population Dynamics", "Droplet Distribution", "Initial Density & Vc", "Fold Change", "Scaling Law"])
+    
     with t1:
         st.markdown("##### Mean Growth curves per volume bin")
         p = plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges)
         streamlit_bokeh(p, use_container_width=True)
+        
     with t2:
         st.markdown("##### Droplet Distribution: Total vs Occupied")
         p = plot_distribution(total_vols, vols)
         streamlit_bokeh(p, use_container_width=True)
+        
     with t3:
         p = plot_initial_density_vc(df_density, vc_val, params['concentration'])
         streamlit_bokeh(p, use_container_width=True)
+        
     with t4:
         st.markdown("##### Biomass Fold Change vs Volume")
         p = plot_fold_change(vols, bacts, final_counts, vc_val)
         streamlit_bokeh(p, use_container_width=True)
+
+    # --- UPDATE: Added Tab 5 content ---
+    with t5:
+        st.markdown(f"##### N0 vs Volume (Scaling Law Check)")
+        st.info(f"Regression is calculated for Volumes ≥ Vc ({vc_val:.1f} μm³)")
+        # df_density contains 'Volume' and 'Count', which is what we need
+        p = plot_n0_vs_volume(df_density, vc_val)
+        streamlit_bokeh(p, use_container_width=True)
 if __name__ == "__main__":
     main()
+
 
 
