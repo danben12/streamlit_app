@@ -648,7 +648,7 @@ def main():
     st.subheader("Results Analysis")
     
     # --- UPDATE: Added "Scaling Law" to the tabs list ---
-    t1, t2, t3, t4, t5 = st.tabs(["Population Dynamics", "Droplet Distribution", "Initial Density & Vc", "Fold Change", "Scaling Law"])
+    t1, t2, t3, t4, t5 = st.tabs(["Population Dynamics", "Droplet Distribution", "Initial Density & Vc", "Fold Change", "N0 vs Volume"])
     
     with t1:
         st.markdown("##### Mean Growth curves per volume bin")
@@ -671,13 +671,14 @@ def main():
 
     # --- UPDATE: Added Tab 5 content ---
     with t5:
-        st.markdown(f"##### N0 vs Volume (Scaling Law Check)")
+        st.markdown(f"##### N0 vs Volume")
         st.info(f"Regression is calculated for Volumes ≥ Vc ({vc_val:.1f} μm³)")
         # df_density contains 'Volume' and 'Count', which is what we need
         p = plot_n0_vs_volume(df_density, vc_val)
         streamlit_bokeh(p, use_container_width=True)
 if __name__ == "__main__":
     main()
+
 
 
 
