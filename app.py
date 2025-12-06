@@ -399,7 +399,7 @@ def int_to_superscript(n):
 def plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges):
     """Tab 1: Plots NORMALIZED average growth curves for each volume decade."""
     # Updated y_axis_label
-    p = figure(x_axis_label="Time (h)", y_axis_label="Normalized Count (N/N₀)", y_axis_type="log", 
+    p = figure(x_axis_label="Time (h)", y_axis_label="Normalized Count (N/N₀)", 
                height=800, width=1200, tools="pan,wheel_zoom,reset,save")
     colors = Category10[10]
     legend_items = []
@@ -691,6 +691,7 @@ def main():
         streamlit_bokeh(p, use_container_width=True)
 if __name__ == "__main__":
     main()
+
 
 
 
