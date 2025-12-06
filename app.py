@@ -397,23 +397,36 @@ def int_to_superscript(n):
     return str(n).translate(str.maketrans('0123456789-', '⁰¹²³⁴⁵⁶⁷⁸⁹⁻'))
 
 def plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges):
-    """Tab 1: Plots average growth curves for each volume decade."""
-    p = figure(x_axis_label="Time (h)", y_axis_label="Mean Bacteria Count", y_axis_type="log", 
+    """Tab 1: Plots NORMALIZED average growth curves for each volume decade."""
+    # Updated y_axis_label
+    p = figure(x_axis_label="Time (h)", y_axis_label="Normalized Count (N/N₀)", y_axis_type="log", 
                height=800, width=1200, tools="pan,wheel_zoom,reset,save")
     colors = Category10[10]
     legend_items = []
     
     for i in range(len(bin_counts)):
         if bin_counts[i] > 0:
+            # 1. Calculate the raw mean trajectory
             mean_traj = bin_sums[i, :] / bin_counts[i]
-            # Handle zeros for log plot
-            mean_traj = np.where(mean_traj <= 0, np.nan, mean_traj)
+            
+            # 2. Normalize by the initial value (Time 0)
+            initial_val = mean_traj[0]
+            
+            # Safety check to avoid division by zero (though occupied bins should be > 0)
+            if initial_val > 1e-9:
+                norm_traj = mean_traj / initial_val
+            else:
+                norm_traj = mean_traj 
+
+            # 3. Handle zeros for log plot
+            # (Values <= 0 cannot be plotted on Log axis, set to NaN)
+            norm_traj = np.where(norm_traj <= 0, np.nan, norm_traj)
             
             low_exp = int(np.log10(bin_edges[i]))
             high_exp = int(np.log10(bin_edges[i+1]))
             label = f"10{int_to_superscript(low_exp)} - 10{int_to_superscript(high_exp)} (n={int(bin_counts[i])})"
             
-            r = p.line(t_eval, mean_traj, line_color=colors[i % 10], line_width=3, alpha=0.9)
+            r = p.line(t_eval, norm_traj, line_color=colors[i % 10], line_width=3, alpha=0.9)
             legend_items.append((label, [r]))
             
     legend = Legend(items=legend_items, title="Volume Bins", click_policy="hide")
@@ -678,6 +691,7 @@ def main():
         streamlit_bokeh(p, use_container_width=True)
 if __name__ == "__main__":
     main()
+
 
 
 
