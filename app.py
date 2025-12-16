@@ -4,7 +4,8 @@ import pandas as pd
 from scipy.integrate import odeint
 from bokeh.plotting import figure
 from bokeh.models import ColumnDataSource, HoverTool, Legend, LegendItem, Span
-from bokeh.palettes import Category10
+from bokeh.palettes import linear_palette # Added import
+import colorcet as cc # Added import
 from streamlit_bokeh import streamlit_bokeh
 import time
 from scipy.stats import linregress
@@ -382,9 +383,24 @@ def plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges):
     # Updated Y label to Biomass
     p = figure(x_axis_label="Time (h)", y_axis_label="Normalized Biomass (B/B₀)", 
                height=800, width=1200, tools="pan,wheel_zoom,reset,save")
-    colors = Category10[10]
+    
+    # --- COLOR UPDATE ---
+    # Define custom high contrast map from CET_D1
+    high_contrast_color_map = [cc.CET_D1[0], cc.CET_D1[80], cc.CET_D1[180], cc.CET_D1[230], cc.CET_D1[255]]
+    
+    # Count how many bins actually have data
+    unique_bins = sum(1 for c in bin_counts if c > 0)
+    
+    # Generate palette dynamically
+    # Note: linear_palette needs at least 1 color, safety check just in case
+    if unique_bins > 0:
+        colors = linear_palette(high_contrast_color_map, unique_bins)
+    else:
+        colors = []
+
     legend_items = []
     
+    color_idx = 0
     # Individual Bins
     for i in range(len(bin_counts)):
         if bin_counts[i] > 0:
@@ -402,8 +418,10 @@ def plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges):
             high_exp = int(np.log10(bin_edges[i+1]))
             label = f"10{int_to_superscript(low_exp)} - 10{int_to_superscript(high_exp)} (n={int(bin_counts[i])})"
             
-            r = p.line(t_eval, norm_traj, line_color=colors[i % 10], line_width=3, alpha=0.9)
+            # Use the generated palette color
+            r = p.line(t_eval, norm_traj, line_color=colors[color_idx], line_width=3, alpha=0.9)
             legend_items.append((label, [r]))
+            color_idx += 1
 
     # Metapopulation Line
     total_biomass_traj = np.sum(bin_sums, axis=0)
