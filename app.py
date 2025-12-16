@@ -16,29 +16,22 @@ from bokeh.models import Div
 # ==========================================
 
 def configure_page():
-    """Sets up the basic page title and layout."""
     st.set_page_config(page_title="Growth - Lysis Model simulation", layout="wide")
     st.title("Growth - Lysis Model simulation")
 
 def init_session_state():
-    """Initializes session variables if they don't exist."""
     if "last_change_time" not in st.session_state:
         st.session_state.last_change_time = time.time()
 
 def input_changed():
-    """Callback to update the debounce timer whenever a user changes an input."""
     st.session_state.last_change_time = time.time()
 
 def check_debounce(delay=0.7):
-    """
-    Pauses execution until the user stops interacting for 'delay' seconds.
-    This prevents the heavy simulation from running while typing.
-    """
     while time.time() - st.session_state.last_change_time < delay:
         time.sleep(0.1)
 
 # ==========================================
-# 2. ODE MATH MODELS (VECTORIZED)
+# 2. ODE MATH MODELS
 # ==========================================
 
 def vec_effective_concentration(y_flat, t, N, V, mu_max, Ks, Y, K_on, K_off, lambda_max, K_D, n):
@@ -123,18 +116,14 @@ def vec_combined_model(y_flat, t, N, V, mu_max, Ks, Y, K_on, K_off, K_D, n, a, b
 # ==========================================
 
 def render_sidebar():
-    """
-    Renders the sidebar inputs and returns a dictionary of all simulation parameters.
-    """
     st.sidebar.header("Simulation Settings")
-    
     params = {}
     
     # --- Model Selection ---
     model_choices = ["Effective Concentration", "Linear Lysis Rate", "Combined Model"]
     params['model'] = st.sidebar.selectbox("Select Model", model_choices, on_change=input_changed)
 
-    # --- FEATURE UPDATE 1: Time Settings ---
+    # --- Time Settings ---
     st.sidebar.subheader("Time Settings")
     col_t1, col_t2, col_t3 = st.sidebar.columns(3)
     with col_t1:
@@ -151,7 +140,7 @@ def render_sidebar():
     params['n_samples'] = st.sidebar.number_input("N Samples (Droplets)", 1000, 100000, 17000, 1000, on_change=input_changed)
     params['conc_exp'] = st.sidebar.slider("Concentration Exp (10^x)", -7.0, -1.0, -4.3, 0.1, on_change=input_changed)
     params['concentration'] = 10 ** params['conc_exp']
-
+    
     # --- Global Params ---
     st.sidebar.subheader("Global Parameters")
     tab1, tab2 = st.sidebar.tabs(["Growth", "Drugs/Lysis"])
@@ -194,25 +183,61 @@ def render_sidebar():
 # ==========================================
 
 @st.cache_data
-def generate_population(mean, std, n, conc):
+def generate_population(mean, std, n, conc, mean_pix, std_pix):
+    """
+    Generates population with added noise for biomass conversion.
+    1. Generate Volume (LogNormal)
+    2. Generate Cell Counts (Poisson)
+    3. Convert Cell Counts -> Biomass Pixels (Normal Approximation)
+    """
+    # 1. Droplet Volumes
     log_data = np.random.normal(loc=mean, scale=std, size=int(n))
     volume_data = 10 ** log_data
     
     mask_vol = (volume_data >= 1000) & (volume_data <= 1e8)
     trimmed_vol = volume_data[mask_vol]
     
+    # 2. Poisson loading (Cell Counts)
     lambdas = trimmed_vol * conc
-    bacteria_counts = np.random.poisson(lam=lambdas)
+    cell_counts = np.random.poisson(lam=lambdas)
     
-    occupied_mask = bacteria_counts > 0
+    # Filter occupied
+    occupied_mask = cell_counts > 0
     final_vols = trimmed_vol[occupied_mask].copy()
-    final_bact = bacteria_counts[occupied_mask].copy()
+    final_counts = cell_counts[occupied_mask].copy()
     
-    return final_vols, final_bact, trimmed_vol
+    # 3. Biomass Conversion with Noise
+    # Total Mean = N * mean_pix
+    # Total Std = sqrt(N) * std_pix (Sum of variances)
+    
+    n_occupied = len(final_counts)
+    
+    # Base biomass from counts
+    base_biomass = final_counts * mean_pix
+    
+    # Add noise (Normal distribution N(0, 1) scaled by Total Std)
+    noise_scale = np.sqrt(final_counts) * std_pix
+    noise = np.random.normal(0, 1, n_occupied) * noise_scale
+    
+    final_biomass = base_biomass + noise
+    
+    # Physics check: Biomass cannot be negative or zero (since N > 0)
+    # We clip it to a small epsilon or the smallest possible cell size (e.g., 0.5 * mean)
+    final_biomass = np.maximum(final_biomass, 0.1) 
+    
+    return final_vols, final_counts, final_biomass, trimmed_vol
 
 
-def calculate_vc_and_density(vols, bacts, theoretical_conc):
-    df = pd.DataFrame({'Volume': vols, 'Count': bacts})
+def calculate_vc_and_density(vols, biomass, theoretical_conc, mean_pix):
+    """
+    Calculates Density stats.
+    Note: 'biomass' is now in pixels, so we normalize by mean_pix to get "Effective Cell Density"
+    for comparison with theoretical Poisson concentration.
+    """
+    # Convert Biomass (pixels) back to Effective Count for density checks
+    effective_count = biomass / mean_pix
+    
+    df = pd.DataFrame({'Volume': vols, 'Biomass': biomass, 'Count': effective_count})
     df['InitialDensity'] = df['Count'] / df['Volume']
     df = df.sort_values(by='Volume').reset_index(drop=True)
 
@@ -236,21 +261,16 @@ def calculate_vc_and_density(vols, bacts, theoretical_conc):
     return df, vc_val
 
 
-def run_simulation(vols, bacts, total_vols_range, params):
+def run_simulation(vols, initial_biomass, total_vols_range, params):
     BATCH_SIZE = 2000
-    
-    # --- FEATURE UPDATE 1 Implementation: Dynamic Time Array ---
-    # Create time array based on user input (inclusive of t_end)
     t_eval = np.arange(params['t_start'], params['t_end'] + params['dt']/100.0, params['dt'])
     
-    # Safety check: if dt is huge and t_eval is small, ensure at least 2 points
     if len(t_eval) < 2:
         t_eval = np.linspace(params['t_start'], params['t_end'], 2)
 
     N_STEPS = len(t_eval)
     N_occupied = len(vols)
     
-    # --- Binning setup ---
     min_exp = int(np.floor(np.log10(total_vols_range[0])))
     max_exp = int(np.ceil(np.log10(total_vols_range[1])))
     bin_edges_log = np.arange(min_exp, max_exp + 1)
@@ -284,15 +304,17 @@ def run_simulation(vols, bacts, total_vols_range, params):
         status_text.text(f"Simulating Batch {i_batch + 1}/{n_batches} ({current_batch_size} droplets)...")
         
         batch_vols = vols[start_idx:end_idx]
-        batch_bacts = bacts[start_idx:end_idx]
+        batch_biomass = initial_biomass[start_idx:end_idx] # This is now Pixels
         
         args = ()
         y0_flat = None
         
+        # NOTE: We use batch_biomass as the initial B_live (Index 0 or 2)
+        
         if model == "Effective Concentration":
             y0_mat = np.zeros((current_batch_size, 5))
             y0_mat[:, 0] = params['A0']   
-            y0_mat[:, 2] = batch_bacts    
+            y0_mat[:, 2] = batch_biomass  # <--- Using Biomass/Pixels
             y0_mat[:, 4] = params['S0']   
             y0_flat = y0_mat.flatten()
             args = (current_batch_size, batch_vols, params['mu_max'], params['Ks'], params['Y'], 
@@ -300,7 +322,7 @@ def run_simulation(vols, bacts, total_vols_range, params):
             
         elif model == "Linear Lysis Rate":
             y0_mat = np.zeros((current_batch_size, 3))
-            y0_mat[:, 0] = batch_bacts    
+            y0_mat[:, 0] = batch_biomass  # <--- Using Biomass/Pixels
             y0_mat[:, 2] = params['S0']   
             y0_flat = y0_mat.flatten()
             A0_vec = np.full(current_batch_size, params['A0'])
@@ -310,7 +332,7 @@ def run_simulation(vols, bacts, total_vols_range, params):
         elif model == "Combined Model":
             y0_mat = np.zeros((current_batch_size, 5))
             y0_mat[:, 0] = params['A0']
-            y0_mat[:, 2] = batch_bacts
+            y0_mat[:, 2] = batch_biomass # <--- Using Biomass/Pixels
             y0_mat[:, 4] = params['S0']
             y0_flat = y0_mat.flatten()
             args = (current_batch_size, batch_vols, params['mu_max'], params['Ks'], params['Y'], 
@@ -321,9 +343,9 @@ def run_simulation(vols, bacts, total_vols_range, params):
             sol_reshaped = sol.reshape(N_STEPS, current_batch_size, num_vars)
             batch_blive = sol_reshaped[:, :, idx_Blive]
             
-            # Smooth final counts
             final_c = np.mean(batch_blive[-2:, :], axis=0) if N_STEPS > 2 else batch_blive[-1, :]
-            final_c = np.where(final_c < 1.0, 0.0, final_c)
+            # Thresholding: 1 cell ~ 5.5 pixels. Let's say dead if < 2.0 pixels
+            final_c = np.where(final_c < 2.0, 0.0, final_c)
             final_counts_all[start_idx:end_idx] = final_c
             
             batch_blive_T = batch_blive.T
@@ -357,13 +379,13 @@ def int_to_superscript(n):
     return str(n).translate(str.maketrans('0123456789-', '⁰¹²³⁴⁵⁶⁷⁸⁹⁻'))
 
 def plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges):
-    """Tab 1: Plots NORMALIZED average growth curves + Metapopulation Line."""
-    p = figure(x_axis_label="Time (h)", y_axis_label="Normalized Count (N/N₀)", 
+    # Updated Y label to Biomass
+    p = figure(x_axis_label="Time (h)", y_axis_label="Normalized Biomass (B/B₀)", 
                height=800, width=1200, tools="pan,wheel_zoom,reset,save")
     colors = Category10[10]
     legend_items = []
     
-    # --- Individual Volume Bins ---
+    # Individual Bins
     for i in range(len(bin_counts)):
         if bin_counts[i] > 0:
             mean_traj = bin_sums[i, :] / bin_counts[i]
@@ -383,8 +405,7 @@ def plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges):
             r = p.line(t_eval, norm_traj, line_color=colors[i % 10], line_width=3, alpha=0.9)
             legend_items.append((label, [r]))
 
-    # --- FEATURE UPDATE 2: Metapopulation Line ---
-    # Sum of all bacteria across all bins at each time point
+    # Metapopulation Line
     total_biomass_traj = np.sum(bin_sums, axis=0)
     total_N0 = total_biomass_traj[0]
 
@@ -393,11 +414,10 @@ def plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges):
     else:
         meta_norm = total_biomass_traj
 
-    # Plot the Metapopulation line (Thick, black, dashed)
+    # White line
     r_meta = p.line(t_eval, meta_norm, line_color="white", line_width=4, 
                     line_dash="dashed", alpha=1.0)
     
-    # Add to legend at the top
     legend_items.insert(0, ("Metapopulation (Avg)", [r_meta]))
             
     legend = Legend(items=legend_items, title="Volume Bins", click_policy="hide")
@@ -425,7 +445,9 @@ def plot_distribution(total_vols, occupied_vols):
 
 def plot_initial_density_vc(df_density, vc_val, theoretical_density):
     source = ColumnDataSource(df_density)
-    p = figure(x_axis_type='log', y_axis_type='log', x_axis_label='Volume (μm³)', y_axis_label='Initial Density (cells/μm³)',
+    # Updated labels
+    p = figure(x_axis_type='log', y_axis_type='log', 
+               x_axis_label='Volume (μm³)', y_axis_label='Initial "Effective" Density (cells/μm³)',
                width=1200, height=800, output_backend="webgl", tools="pan,wheel_zoom,reset,save")
     
     p.xaxis.axis_label_text_font_size = "16pt"
@@ -451,11 +473,11 @@ def plot_initial_density_vc(df_density, vc_val, theoretical_density):
     p.add_layout(legend)
     return p
 
-def plot_fold_change(vols, initial_bacts, final_bacts, vc_val):
+def plot_fold_change(vols, initial_biomass, final_biomass, vc_val):
     min_fc = -6.0
     
     with np.errstate(divide='ignore', invalid='ignore'):
-        fc_raw = final_bacts / initial_bacts
+        fc_raw = final_biomass / initial_biomass
         fc_log2 = np.log2(fc_raw)
     
     fc_log2 = np.where(np.isneginf(fc_log2) | np.isnan(fc_log2) | (fc_log2 < min_fc), min_fc, fc_log2)
@@ -469,14 +491,16 @@ def plot_fold_change(vols, initial_bacts, final_bacts, vc_val):
     else:
         df_sub['MovingAverage'] = np.nan
 
-    total_initial = np.sum(initial_bacts)
-    total_final = np.sum(final_bacts)
+    total_initial = np.sum(initial_biomass)
+    total_final = np.sum(final_biomass)
     meta_fc = np.log2(total_final / total_initial) if total_final > 0 else min_fc
     
     source = ColumnDataSource(df_fc)
     sub_source = ColumnDataSource(df_sub)
     
-    p = figure(x_axis_type='log', y_axis_type='linear', x_axis_label='Volume (μm³)', y_axis_label='Log2 Biomass Fold Change',
+    # Updated Y label
+    p = figure(x_axis_type='log', y_axis_type='linear', 
+               x_axis_label='Volume (μm³)', y_axis_label='Log2 Biomass Fold Change (Pixels)',
                width=1200, height=800, y_range=(-7, 9), output_backend="webgl", tools="pan,wheel_zoom,reset,save")
     
     p.xaxis.axis_label_text_font_size = "16pt"
@@ -513,8 +537,9 @@ def plot_n0_vs_volume(df, Vc):
 
     source = ColumnDataSource(plot_df)
     
+    # Updated Y label
     p = figure(x_axis_type='log', y_axis_type='log',
-               x_axis_label='Volume (μm³)', y_axis_label='Initial Count (N0)', 
+               x_axis_label='Volume (μm³)', y_axis_label='Initial Biomass (Pixels)', 
                output_backend="webgl", width=1200, height=800, 
                tools="pan,wheel_zoom,reset,save")
 
@@ -523,22 +548,23 @@ def plot_n0_vs_volume(df, Vc):
     p.xaxis.major_label_text_font_size = "14pt"
     p.yaxis.major_label_text_font_size = "14pt"
 
-    r_scat = p.scatter('Volume', 'Count', source=source, color='gray', alpha=0.6, size=5,
-                       legend_label='N0 vs. Volume')
+    r_scat = p.scatter('Volume', 'Biomass', source=source, color='gray', alpha=0.6, size=5,
+                       legend_label='Biomass vs. Volume')
 
     hover = HoverTool(tooltips=[('Volume', '@Volume{0,0}'), 
-                                ('Count', '@Count'), 
+                                ('Biomass', '@Biomass{0.00}'), 
+                                ('EffectiveCells', '@Count{0.00}'),
                                 ('ID', '@DropletID')],
                       renderers=[r_scat])
     p.add_tools(hover)
 
-    filtered_df = plot_df[(plot_df['Count'] > 0) & (plot_df['Volume'] >= Vc)]
+    filtered_df = plot_df[(plot_df['Biomass'] > 0) & (plot_df['Volume'] >= Vc)]
     
     stats_text = "Insufficient data for regression"
     
     if len(filtered_df) > 2:
         x = np.log10(filtered_df['Volume'])
-        y = np.log10(filtered_df['Count'])
+        y = np.log10(filtered_df['Biomass'])
         
         slope, intercept, r_value, p_value, std_err = linregress(x, y)
         
@@ -571,37 +597,43 @@ def main():
     configure_page()
     init_session_state()
     
+    # --- HARDCODED EXPERIMENTAL PARAMETERS ---
+    MEAN_PIXELS = 5.5
+    STD_PIXELS = 1.0
+    
     params = render_sidebar()
     
     check_debounce()
     
-    vols, bacts, total_vols = generate_population(params['mean_log10'], params['std_log10'], 
-                                                  params['n_samples'], params['concentration'])
+    vols, counts, initial_biomass, total_vols = generate_population(
+        params['mean_log10'], params['std_log10'], params['n_samples'], 
+        params['concentration'], MEAN_PIXELS, STD_PIXELS
+    )
     
     n_trimmed = len(total_vols)
     N_occupied = len(vols)
     
     pct = (N_occupied / n_trimmed * 100) if n_trimmed > 0 else 0.0
-    st.write(f"**Simulation Stats:** **{n_trimmed}** remain after trimming ($10^3 < V < 10^8$). "
-             f"**{N_occupied}** are occupied (**{pct:.2f}%** occupation).")
-    st.markdown(f"### Antibiotic Concentration ($A_0$): {params['A0']}")
+    st.write(f"**Simulation Stats:** **{n_trimmed}** remain after trimming. "
+             f"**{N_occupied}** are occupied (**{pct:.2f}%**).")
+    st.markdown(f"### Antibiotic Concentration ($A_0$): {params['A0']} | Noise: {MEAN_PIXELS}±{STD_PIXELS} pix/cell (Fixed)")
     
     if N_occupied == 0:
         st.error("No occupied droplets found. Try increasing Concentration or Mean Volume.")
         st.stop()
         
-    df_density, vc_val = calculate_vc_and_density(vols, bacts, params['concentration'])
+    df_density, vc_val = calculate_vc_and_density(vols, initial_biomass, params['concentration'], MEAN_PIXELS)
     
-    bin_sums, bin_counts, final_counts, t_eval, bin_edges = run_simulation(
-        vols, bacts, (total_vols.min(), total_vols.max()), params
+    bin_sums, bin_counts, final_biomass, t_eval, bin_edges = run_simulation(
+        vols, initial_biomass, (total_vols.min(), total_vols.max()), params
     )
     
-    st.subheader("Results Analysis")
+    st.subheader("Results Analysis (Units: Biomass Pixels)")
     
     t1, t2, t3, t4, t5 = st.tabs(["Population Dynamics", "Droplet Distribution", "Initial Density & Vc", "Fold Change", "N0 vs Volume"])
     
     with t1:
-        st.markdown("##### Mean Growth curves per volume bin")
+        st.markdown("##### Mean Growth curves (Normalized Biomass)")
         p = plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges)
         streamlit_bokeh(p, use_container_width=True)
         
@@ -616,15 +648,14 @@ def main():
         
     with t4:
         st.markdown("##### Biomass Fold Change vs Volume")
-        p = plot_fold_change(vols, bacts, final_counts, vc_val)
+        p = plot_fold_change(vols, initial_biomass, final_biomass, vc_val)
         streamlit_bokeh(p, use_container_width=True)
 
     with t5:
-        st.markdown(f"##### N0 vs Volume")
+        st.markdown(f"##### Initial Biomass (N0) vs Volume")
         st.info(f"Regression is calculated for Volumes ≥ Vc ({vc_val:.1f} μm³)")
         p = plot_n0_vs_volume(df_density, vc_val)
         streamlit_bokeh(p, use_container_width=True)
 
 if __name__ == "__main__":
     main()
-
