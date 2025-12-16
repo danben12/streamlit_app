@@ -4,3 +4,4 @@ pandas
 scipy
 bokeh
 streamlit-bokeh
+colorcet
