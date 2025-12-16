@@ -634,7 +634,7 @@ def main():
     pct = (N_occupied / n_trimmed * 100) if n_trimmed > 0 else 0.0
     st.write(f"**Simulation Stats:** **{n_trimmed}** remain after trimming. "
              f"**{N_occupied}** are occupied (**{pct:.2f}%**).")
-    st.markdown(f"### Antibiotic Concentration ($A_0$): {params['A0']} | Noise: {MEAN_PIXELS}±{STD_PIXELS} pix/cell (Fixed)")
+    st.markdown(f"### Antibiotic Concentration ($A_0$): {params['A0']}")
     
     if N_occupied == 0:
         st.error("No occupied droplets found. Try increasing Concentration or Mean Volume.")
@@ -646,7 +646,7 @@ def main():
         vols, initial_biomass, (total_vols.min(), total_vols.max()), params
     )
     
-    st.subheader("Results Analysis (Units: Biomass Pixels)")
+    st.subheader("Results Analysis")
     
     t1, t2, t3, t4, t5 = st.tabs(["Population Dynamics", "Droplet Distribution", "Initial Density & Vc", "Fold Change", "N0 vs Volume"])
     
@@ -677,3 +677,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
