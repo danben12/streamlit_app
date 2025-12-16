@@ -394,7 +394,7 @@ def plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges):
         meta_norm = total_biomass_traj
 
     # Plot the Metapopulation line (Thick, black, dashed)
-    r_meta = p.line(t_eval, meta_norm, line_color="black", line_width=4, 
+    r_meta = p.line(t_eval, meta_norm, line_color="white", line_width=4, 
                     line_dash="dashed", alpha=1.0)
     
     # Add to legend at the top
@@ -627,3 +627,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
