@@ -4,8 +4,8 @@ import pandas as pd
 from scipy.integrate import odeint
 from bokeh.plotting import figure
 from bokeh.models import ColumnDataSource, HoverTool, Legend, LegendItem, Span
-from bokeh.palettes import linear_palette # Added import
-import colorcet as cc # Added import
+from bokeh.palettes import linear_palette 
+import colorcet as cc 
 from streamlit_bokeh import streamlit_bokeh
 import time
 from scipy.stats import linregress
@@ -186,10 +186,7 @@ def render_sidebar():
 @st.cache_data
 def generate_population(mean, std, n, conc, mean_pix, std_pix):
     """
-    Generates population with added noise for biomass conversion.
-    1. Generate Volume (LogNormal)
-    2. Generate Cell Counts (Poisson)
-    3. Convert Cell Counts -> Biomass Pixels (Normal Approximation)
+    Generates population with integer pixel rounding (camera simulation).
     """
     # 1. Droplet Volumes
     log_data = np.random.normal(loc=mean, scale=std, size=int(n))
@@ -207,36 +204,29 @@ def generate_population(mean, std, n, conc, mean_pix, std_pix):
     final_vols = trimmed_vol[occupied_mask].copy()
     final_counts = cell_counts[occupied_mask].copy()
     
-    # 3. Biomass Conversion with Noise
-    # Total Mean = N * mean_pix
-    # Total Std = sqrt(N) * std_pix (Sum of variances)
-    
     n_occupied = len(final_counts)
     
-    # Base biomass from counts
+    # 3. Biomass Conversion with Noise
     base_biomass = final_counts * mean_pix
     
-    # Add noise (Normal distribution N(0, 1) scaled by Total Std)
+    # Add noise 
     noise_scale = np.sqrt(final_counts) * std_pix
     noise = np.random.normal(0, 1, n_occupied) * noise_scale
     
     raw_biomass = base_biomass + noise
     
-    # Physics check: Biomass cannot be negative or zero (since N > 0)
-    # We clip it to a small epsilon or the smallest possible cell size (e.g., 0.5 * mean)
+    # --- DISCRETIZATION STEP ---
+    # Round to nearest integer to simulate pixel counting camera
     final_biomass = np.round(raw_biomass)
-    final_biomass = np.maximum(final_biomass, 0.1) 
+    
+    # Physics check: Biomass cannot be zero if occupied
+    final_biomass = np.maximum(final_biomass, 1.0) 
     
     return final_vols, final_counts, final_biomass, trimmed_vol
 
 
 def calculate_vc_and_density(vols, biomass, theoretical_conc, mean_pix):
-    """
-    Calculates Density stats.
-    Note: 'biomass' is now in pixels, so we normalize by mean_pix to get "Effective Cell Density"
-    for comparison with theoretical Poisson concentration.
-    """
-    # Convert Biomass (pixels) back to Effective Count for density checks
+    # Effective count for density comparison
     effective_count = biomass / mean_pix
     
     df = pd.DataFrame({'Volume': vols, 'Biomass': biomass, 'Count': effective_count})
@@ -306,26 +296,24 @@ def run_simulation(vols, initial_biomass, total_vols_range, params):
         status_text.text(f"Simulating Batch {i_batch + 1}/{n_batches} ({current_batch_size} droplets)...")
         
         batch_vols = vols[start_idx:end_idx]
-        batch_biomass = initial_biomass[start_idx:end_idx] # This is now Pixels
+        batch_biomass = initial_biomass[start_idx:end_idx] 
         
         args = ()
         y0_flat = None
         
-        # NOTE: We use batch_biomass as the initial B_live (Index 0 or 2)
-        
         if model == "Effective Concentration":
             y0_mat = np.zeros((current_batch_size, 5))
-            y0_mat[:, 0] = params['A0']   
-            y0_mat[:, 2] = batch_biomass  # <--- Using Biomass/Pixels
-            y0_mat[:, 4] = params['S0']   
+            y0_mat[:, 0] = params['A0']    
+            y0_mat[:, 2] = batch_biomass  
+            y0_mat[:, 4] = params['S0']    
             y0_flat = y0_mat.flatten()
             args = (current_batch_size, batch_vols, params['mu_max'], params['Ks'], params['Y'], 
                     params['K_on'], params['K_off'], params['lambda_max'], params['K_D'], params['n_hill'])
             
         elif model == "Linear Lysis Rate":
             y0_mat = np.zeros((current_batch_size, 3))
-            y0_mat[:, 0] = batch_biomass  # <--- Using Biomass/Pixels
-            y0_mat[:, 2] = params['S0']   
+            y0_mat[:, 0] = batch_biomass 
+            y0_mat[:, 2] = params['S0']    
             y0_flat = y0_mat.flatten()
             A0_vec = np.full(current_batch_size, params['A0'])
             args = (current_batch_size, batch_vols, A0_vec, params['mu_max'], params['Ks'], params['Y'], 
@@ -334,7 +322,7 @@ def run_simulation(vols, initial_biomass, total_vols_range, params):
         elif model == "Combined Model":
             y0_mat = np.zeros((current_batch_size, 5))
             y0_mat[:, 0] = params['A0']
-            y0_mat[:, 2] = batch_biomass # <--- Using Biomass/Pixels
+            y0_mat[:, 2] = batch_biomass
             y0_mat[:, 4] = params['S0']
             y0_flat = y0_mat.flatten()
             args = (current_batch_size, batch_vols, params['mu_max'], params['Ks'], params['Y'], 
@@ -343,10 +331,16 @@ def run_simulation(vols, initial_biomass, total_vols_range, params):
         try:
             sol = odeint(func, y0_flat, t_eval, args=args)
             sol_reshaped = sol.reshape(N_STEPS, current_batch_size, num_vars)
-            batch_blive_continuous = sol_reshaped[:, :, idx_Blive]
-            batch_blive = np.round(batch_blive_continuous)
+            
+            # Get Continuous Result
+            batch_blive_cont = sol_reshaped[:, :, idx_Blive]
+            
+            # --- DISCRETIZATION STEP (CAMERA) ---
+            # Round the output to nearest integer pixel
+            batch_blive = np.round(batch_blive_cont)
+            
             final_c = np.mean(batch_blive[-2:, :], axis=0) if N_STEPS > 2 else batch_blive[-1, :]
-            # Thresholding: 1 cell ~ 5.5 pixels. Let's say dead if < 2.0 pixels
+            # Thresholding: 1 cell ~ 5.5 pixels. Dead if < 2.0 pixels
             final_c = np.where(final_c < 2.0, 0.0, final_c)
             final_counts_all[start_idx:end_idx] = final_c
             
@@ -381,19 +375,13 @@ def int_to_superscript(n):
     return str(n).translate(str.maketrans('0123456789-', '⁰¹²³⁴⁵⁶⁷⁸⁹⁻'))
 
 def plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges):
-    # Updated Y label to Biomass
     p = figure(x_axis_label="Time (h)", y_axis_label="Normalized Biomass (B/B₀)", 
                height=800, width=1200, tools="pan,wheel_zoom,reset,save")
     
-    # --- COLOR UPDATE ---
-    # Define custom high contrast map from CET_D1
     high_contrast_color_map = [cc.CET_D1[0], cc.CET_D1[80], cc.CET_D1[180], cc.CET_D1[230], cc.CET_D1[255]]
     
-    # Count how many bins actually have data
     unique_bins = sum(1 for c in bin_counts if c > 0)
     
-    # Generate palette dynamically
-    # Note: linear_palette needs at least 1 color, safety check just in case
     if unique_bins > 0:
         colors = linear_palette(high_contrast_color_map, unique_bins)
     else:
@@ -402,7 +390,6 @@ def plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges):
     legend_items = []
     
     color_idx = 0
-    # Individual Bins
     for i in range(len(bin_counts)):
         if bin_counts[i] > 0:
             mean_traj = bin_sums[i, :] / bin_counts[i]
@@ -419,12 +406,10 @@ def plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges):
             high_exp = int(np.log10(bin_edges[i+1]))
             label = f"10{int_to_superscript(low_exp)} - 10{int_to_superscript(high_exp)} (n={int(bin_counts[i])})"
             
-            # Use the generated palette color
             r = p.line(t_eval, norm_traj, line_color=colors[color_idx], line_width=3, alpha=0.9)
             legend_items.append((label, [r]))
             color_idx += 1
 
-    # Metapopulation Line
     total_biomass_traj = np.sum(bin_sums, axis=0)
     total_N0 = total_biomass_traj[0]
 
@@ -433,7 +418,6 @@ def plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges):
     else:
         meta_norm = total_biomass_traj
 
-    # White line
     r_meta = p.line(t_eval, meta_norm, line_color="white", line_width=4, 
                     line_dash="dashed", alpha=1.0)
     
@@ -464,9 +448,8 @@ def plot_distribution(total_vols, occupied_vols):
 
 def plot_initial_density_vc(df_density, vc_val, theoretical_density):
     source = ColumnDataSource(df_density)
-    # Updated labels
     p = figure(x_axis_type='log', y_axis_type='log', 
-               x_axis_label='Volume (μm³)', y_axis_label='Initial Density (biomass/μm³)',
+               x_axis_label='Volume (μm³)', y_axis_label='Initial "Effective" Density (cells/μm³)',
                width=1200, height=800, output_backend="webgl", tools="pan,wheel_zoom,reset,save")
     
     p.xaxis.axis_label_text_font_size = "16pt"
@@ -517,9 +500,8 @@ def plot_fold_change(vols, initial_biomass, final_biomass, vc_val):
     source = ColumnDataSource(df_fc)
     sub_source = ColumnDataSource(df_sub)
     
-    # Updated Y label
     p = figure(x_axis_type='log', y_axis_type='linear', 
-               x_axis_label='Volume (μm³)', y_axis_label='Log2 Biomass Fold Change',
+               x_axis_label='Volume (μm³)', y_axis_label='Log2 Pixel Area Fold Change',
                width=1200, height=800, y_range=(-7, 9), output_backend="webgl", tools="pan,wheel_zoom,reset,save")
     
     p.xaxis.axis_label_text_font_size = "16pt"
@@ -548,7 +530,9 @@ def plot_fold_change(vols, initial_biomass, final_biomass, vc_val):
         LegendItem(label='Baseline (0)', renderers=[r_base])
     ], location='top_right')
     p.add_layout(legend, 'right')
-    return p
+    
+    # RETURN BOTH PLOT AND DATAFRAME FOR DOWNLOAD
+    return p, df_fc
 
 def plot_n0_vs_volume(df, Vc):
     plot_df = df.copy()
@@ -556,9 +540,8 @@ def plot_n0_vs_volume(df, Vc):
 
     source = ColumnDataSource(plot_df)
     
-    # Updated Y label
     p = figure(x_axis_type='log', y_axis_type='log',
-               x_axis_label='Volume (μm³)', y_axis_label='Initial Biomass', 
+               x_axis_label='Volume (μm³)', y_axis_label='Initial Biomass (Pixels)', 
                output_backend="webgl", width=1200, height=800, 
                tools="pan,wheel_zoom,reset,save")
 
@@ -571,7 +554,8 @@ def plot_n0_vs_volume(df, Vc):
                        legend_label='Biomass vs. Volume')
 
     hover = HoverTool(tooltips=[('Volume', '@Volume{0,0}'), 
-                                ('Biomass', '@Biomass{0.00}'),
+                                ('Biomass', '@Biomass{0.00}'), 
+                                ('EffectiveCells', '@Count{0.00}'),
                                 ('ID', '@DropletID')],
                       renderers=[r_scat])
     p.add_tools(hover)
@@ -606,6 +590,9 @@ def plot_n0_vs_volume(df, Vc):
 
     return column(p, stats_div)
 
+def convert_df(df):
+    """Helper to convert DF to CSV for download"""
+    return df.to_csv(index=False).encode('utf-8')
 
 # ==========================================
 # 6. MAIN EXECUTION
@@ -615,7 +602,6 @@ def main():
     configure_page()
     init_session_state()
     
-    # --- HARDCODED EXPERIMENTAL PARAMETERS ---
     MEAN_PIXELS = 5.5
     STD_PIXELS = 1.0
     
@@ -655,33 +641,71 @@ def main():
         p = plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges)
         streamlit_bokeh(p, use_container_width=True)
         
+        # --- Prepare Data for Download (Mean Trajectories per Bin) ---
+        data_dyn = {'Time': t_eval}
+        for i in range(len(bin_counts)):
+            if bin_counts[i] > 0:
+                # Calculate mean biomass for this bin
+                mean_traj = bin_sums[i, :] / bin_counts[i]
+                low_exp = int(np.log10(bin_edges[i]))
+                high_exp = int(np.log10(bin_edges[i+1]))
+                
+                # Normalize logic matching the plot
+                initial_val = mean_traj[0]
+                if initial_val > 1e-9:
+                    norm_traj = mean_traj / initial_val
+                else:
+                    norm_traj = mean_traj
+                
+                col_name = f"Bin_10^{low_exp}_to_10^{high_exp}_(n={int(bin_counts[i])})"
+                data_dyn[col_name] = norm_traj
+                
+        df_dynamics = pd.DataFrame(data_dyn)
+        st.download_button("Download Dynamics Data", data=convert_df(df_dynamics), 
+                           file_name="dynamics_curves.csv", mime="text/csv")
+        
     with t2:
         st.markdown("##### Droplet Distribution: Total vs Occupied")
         p = plot_distribution(total_vols, vols)
         streamlit_bokeh(p, use_container_width=True)
         
+        # --- Prepare Data for Download (Raw Volumes) ---
+        # Since lengths differ, we'll create a dataframe padded with NaNs
+        max_len = max(len(total_vols), len(vols))
+        total_vols_pad = np.pad(total_vols, (0, max_len - len(total_vols)), constant_values=np.nan)
+        occupied_vols_pad = np.pad(vols, (0, max_len - len(vols)), constant_values=np.nan)
+        
+        df_dist = pd.DataFrame({'Total_Droplet_Volumes': total_vols_pad, 'Occupied_Droplet_Volumes': occupied_vols_pad})
+        st.download_button("Download Distribution Data", data=convert_df(df_dist), 
+                           file_name="volume_distribution.csv", mime="text/csv")
+        
     with t3:
         p = plot_initial_density_vc(df_density, vc_val, params['concentration'])
         streamlit_bokeh(p, use_container_width=True)
         
+        # --- Download Existing DF ---
+        st.download_button("Download Density Data", data=convert_df(df_density), 
+                           file_name="initial_density_data.csv", mime="text/csv")
+        
     with t4:
         st.markdown("##### Biomass Fold Change vs Volume")
-        p = plot_fold_change(vols, initial_biomass, final_biomass, vc_val)
+        # Unpack both Figure and DF
+        p, df_fc = plot_fold_change(vols, initial_biomass, final_biomass, vc_val)
         streamlit_bokeh(p, use_container_width=True)
+        
+        # --- Download FC Data ---
+        st.download_button("Download FoldChange Data", data=convert_df(df_fc), 
+                           file_name="fold_change_data.csv", mime="text/csv")
 
     with t5:
         st.markdown(f"##### Initial Biomass (N0) vs Volume")
         st.info(f"Regression is calculated for Volumes ≥ Vc ({vc_val:.1f} μm³)")
         p = plot_n0_vs_volume(df_density, vc_val)
         streamlit_bokeh(p, use_container_width=True)
+        
+        # --- Download (Same DF as density, but convenient to have here) ---
+        st.download_button("Download N0 vs Vol Data", data=convert_df(df_density), 
+                           file_name="n0_vs_vol_data.csv", mime="text/csv")
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
-
