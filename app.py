@@ -343,7 +343,7 @@ def run_simulation(vols, initial_biomass, total_vols_range, params):
         try:
             sol = odeint(func, y0_flat, t_eval, args=args)
             sol_reshaped = sol.reshape(N_STEPS, current_batch_size, num_vars)
-            batch_blive = sol_reshaped[:, :, idx_Blive]
+            batch_blive_continuous = sol_reshaped[:, :, idx_Blive]
             batch_blive = np.round(batch_blive_continuous)
             final_c = np.mean(batch_blive[-2:, :], axis=0) if N_STEPS > 2 else batch_blive[-1, :]
             # Thresholding: 1 cell ~ 5.5 pixels. Let's say dead if < 2.0 pixels
@@ -678,6 +678,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
