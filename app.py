@@ -519,7 +519,7 @@ def plot_fold_change(vols, initial_biomass, final_biomass, vc_val):
     
     # Updated Y label
     p = figure(x_axis_type='log', y_axis_type='linear', 
-               x_axis_label='Volume (μm³)', y_axis_label='Log2 Biomass Fold Change (Pixels)',
+               x_axis_label='Volume (μm³)', y_axis_label='Log2 Biomass Fold Change',
                width=1200, height=800, y_range=(-7, 9), output_backend="webgl", tools="pan,wheel_zoom,reset,save")
     
     p.xaxis.axis_label_text_font_size = "16pt"
@@ -558,7 +558,7 @@ def plot_n0_vs_volume(df, Vc):
     
     # Updated Y label
     p = figure(x_axis_type='log', y_axis_type='log',
-               x_axis_label='Volume (μm³)', y_axis_label='Initial Biomass (Pixels)', 
+               x_axis_label='Volume (μm³)', y_axis_label='Initial Biomass', 
                output_backend="webgl", width=1200, height=800, 
                tools="pan,wheel_zoom,reset,save")
 
@@ -677,6 +677,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
