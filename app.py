@@ -571,8 +571,7 @@ def plot_n0_vs_volume(df, Vc):
                        legend_label='Biomass vs. Volume')
 
     hover = HoverTool(tooltips=[('Volume', '@Volume{0,0}'), 
-                                ('Biomass', '@Biomass{0.00}'), 
-                                ('EffectiveCells', '@Count{0.00}'),
+                                ('Biomass', '@Biomass{0.00}'),
                                 ('ID', '@DropletID')],
                       renderers=[r_scat])
     p.add_tools(hover)
@@ -678,6 +677,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
