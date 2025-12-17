@@ -220,7 +220,7 @@ def generate_population(mean, std, n, conc, mean_pix, std_pix):
     noise_scale = np.sqrt(final_counts) * std_pix
     noise = np.random.normal(0, 1, n_occupied) * noise_scale
     
-    final_biomass = base_biomass + noise
+    raw_biomass = base_biomass + noise
     
     # Physics check: Biomass cannot be negative or zero (since N > 0)
     # We clip it to a small epsilon or the smallest possible cell size (e.g., 0.5 * mean)
@@ -678,5 +678,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
