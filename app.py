@@ -638,19 +638,15 @@ def main():
     
     with t1:
         st.markdown("##### Mean Growth curves (Normalized Biomass)")
-        p = plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges)
-        streamlit_bokeh(p, use_container_width=True)
         
-        # --- Prepare Data for Download (Mean Trajectories per Bin) ---
+        # 1. PREPARE DATA
         data_dyn = {'Time': t_eval}
         for i in range(len(bin_counts)):
             if bin_counts[i] > 0:
-                # Calculate mean biomass for this bin
                 mean_traj = bin_sums[i, :] / bin_counts[i]
                 low_exp = int(np.log10(bin_edges[i]))
                 high_exp = int(np.log10(bin_edges[i+1]))
                 
-                # Normalize logic matching the plot
                 initial_val = mean_traj[0]
                 if initial_val > 1e-9:
                     norm_traj = mean_traj / initial_val
@@ -661,51 +657,67 @@ def main():
                 data_dyn[col_name] = norm_traj
                 
         df_dynamics = pd.DataFrame(data_dyn)
+        
+        # 2. DOWNLOAD BUTTON (Now Above Figure)
         st.download_button("Download Dynamics Data", data=convert_df(df_dynamics), 
                            file_name="dynamics_curves.csv", mime="text/csv")
         
-    with t2:
-        st.markdown("##### Droplet Distribution: Total vs Occupied")
-        p = plot_distribution(total_vols, vols)
+        # 3. PLOT
+        p = plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges)
         streamlit_bokeh(p, use_container_width=True)
         
-        # --- Prepare Data for Download (Raw Volumes) ---
-        # Since lengths differ, we'll create a dataframe padded with NaNs
+    with t2:
+        st.markdown("##### Droplet Distribution: Total vs Occupied")
+        
+        # 1. PREPARE DATA
         max_len = max(len(total_vols), len(vols))
         total_vols_pad = np.pad(total_vols, (0, max_len - len(total_vols)), constant_values=np.nan)
         occupied_vols_pad = np.pad(vols, (0, max_len - len(vols)), constant_values=np.nan)
-        
         df_dist = pd.DataFrame({'Total_Droplet_Volumes': total_vols_pad, 'Occupied_Droplet_Volumes': occupied_vols_pad})
+        
+        # 2. DOWNLOAD BUTTON (Above)
         st.download_button("Download Distribution Data", data=convert_df(df_dist), 
                            file_name="volume_distribution.csv", mime="text/csv")
         
-    with t3:
-        p = plot_initial_density_vc(df_density, vc_val, params['concentration'])
+        # 3. PLOT
+        p = plot_distribution(total_vols, vols)
         streamlit_bokeh(p, use_container_width=True)
         
-        # --- Download Existing DF ---
+    with t3:
+        st.markdown("##### Initial Density & Vc Calculation")
+        
+        # 1. DOWNLOAD BUTTON (Above) - df_density already exists
         st.download_button("Download Density Data", data=convert_df(df_density), 
                            file_name="initial_density_data.csv", mime="text/csv")
         
-    with t4:
-        st.markdown("##### Biomass Fold Change vs Volume")
-        # Unpack both Figure and DF
-        p, df_fc = plot_fold_change(vols, initial_biomass, final_biomass, vc_val)
+        # 2. PLOT
+        p = plot_initial_density_vc(df_density, vc_val, params['concentration'])
         streamlit_bokeh(p, use_container_width=True)
         
-        # --- Download FC Data ---
+    with t4:
+        st.markdown("##### Biomass Fold Change vs Volume")
+        
+        # 1. GET DATA AND FIGURE (Must call function first)
+        p, df_fc = plot_fold_change(vols, initial_biomass, final_biomass, vc_val)
+        
+        # 2. DOWNLOAD BUTTON (Above)
         st.download_button("Download FoldChange Data", data=convert_df(df_fc), 
                            file_name="fold_change_data.csv", mime="text/csv")
+        
+        # 3. PLOT
+        streamlit_bokeh(p, use_container_width=True)
 
     with t5:
         st.markdown(f"##### Initial Biomass (N0) vs Volume")
         st.info(f"Regression is calculated for Volumes ≥ Vc ({vc_val:.1f} μm³)")
-        p = plot_n0_vs_volume(df_density, vc_val)
-        streamlit_bokeh(p, use_container_width=True)
         
-        # --- Download (Same DF as density, but convenient to have here) ---
+        # 1. DOWNLOAD BUTTON (Above)
         st.download_button("Download N0 vs Vol Data", data=convert_df(df_density), 
                            file_name="n0_vs_vol_data.csv", mime="text/csv")
+        
+        # 2. PLOT
+        p = plot_n0_vs_volume(df_density, vc_val)
+        streamlit_bokeh(p, use_container_width=True)
 
 if __name__ == "__main__":
     main()
