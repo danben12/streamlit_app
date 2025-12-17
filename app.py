@@ -449,7 +449,7 @@ def plot_distribution(total_vols, occupied_vols):
 def plot_initial_density_vc(df_density, vc_val, theoretical_density):
     source = ColumnDataSource(df_density)
     p = figure(x_axis_type='log', y_axis_type='log', 
-               x_axis_label='Volume (μm³)', y_axis_label='Initial "Effective" Density (cells/μm³)',
+               x_axis_label='Volume (μm³)', y_axis_label='Initial Density (biomass/μm³)',
                width=1200, height=800, output_backend="webgl", tools="pan,wheel_zoom,reset,save")
     
     p.xaxis.axis_label_text_font_size = "16pt"
@@ -501,7 +501,7 @@ def plot_fold_change(vols, initial_biomass, final_biomass, vc_val):
     sub_source = ColumnDataSource(df_sub)
     
     p = figure(x_axis_type='log', y_axis_type='linear', 
-               x_axis_label='Volume (μm³)', y_axis_label='Log2 Pixel Area Fold Change',
+               x_axis_label='Volume (μm³)', y_axis_label='Log2 biomass Fold Change',
                width=1200, height=800, y_range=(-7, 9), output_backend="webgl", tools="pan,wheel_zoom,reset,save")
     
     p.xaxis.axis_label_text_font_size = "16pt"
@@ -541,7 +541,7 @@ def plot_n0_vs_volume(df, Vc):
     source = ColumnDataSource(plot_df)
     
     p = figure(x_axis_type='log', y_axis_type='log',
-               x_axis_label='Volume (μm³)', y_axis_label='Initial Biomass (Pixels)', 
+               x_axis_label='Volume (μm³)', y_axis_label='Initial Biomass', 
                output_backend="webgl", width=1200, height=800, 
                tools="pan,wheel_zoom,reset,save")
 
@@ -555,7 +555,6 @@ def plot_n0_vs_volume(df, Vc):
 
     hover = HoverTool(tooltips=[('Volume', '@Volume{0,0}'), 
                                 ('Biomass', '@Biomass{0.00}'), 
-                                ('EffectiveCells', '@Count{0.00}'),
                                 ('ID', '@DropletID')],
                       renderers=[r_scat])
     p.add_tools(hover)
@@ -721,3 +720,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
