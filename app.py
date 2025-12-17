@@ -224,6 +224,7 @@ def generate_population(mean, std, n, conc, mean_pix, std_pix):
     
     # Physics check: Biomass cannot be negative or zero (since N > 0)
     # We clip it to a small epsilon or the smallest possible cell size (e.g., 0.5 * mean)
+    final_biomass = np.round(raw_biomass)
     final_biomass = np.maximum(final_biomass, 0.1) 
     
     return final_vols, final_counts, final_biomass, trimmed_vol
@@ -343,7 +344,7 @@ def run_simulation(vols, initial_biomass, total_vols_range, params):
             sol = odeint(func, y0_flat, t_eval, args=args)
             sol_reshaped = sol.reshape(N_STEPS, current_batch_size, num_vars)
             batch_blive = sol_reshaped[:, :, idx_Blive]
-            
+            batch_blive = np.round(batch_blive_continuous)
             final_c = np.mean(batch_blive[-2:, :], axis=0) if N_STEPS > 2 else batch_blive[-1, :]
             # Thresholding: 1 cell ~ 5.5 pixels. Let's say dead if < 2.0 pixels
             final_c = np.where(final_c < 2.0, 0.0, final_c)
@@ -677,4 +678,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
