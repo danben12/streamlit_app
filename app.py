@@ -253,6 +253,51 @@ def calculate_vc_and_density(vols, biomass, theoretical_conc, mean_pix):
     return df, vc_val
 
 
+def calculate_batch_lambda(sol_reshaped, t_eval, vols, params, N_batch):
+    """
+    Reconstructs the Lambda_D (lysis rate) history from the solved states.
+    Returns matrix of shape (n_steps, n_droplets)
+    """
+    model = params['model']
+    n_steps = sol_reshaped.shape[0]
+    lambda_matrix = np.zeros((n_steps, N_batch))
+    
+    if model == "Linear Lysis Rate":
+        B_live = sol_reshaped[:, :, 0]
+        S = sol_reshaped[:, :, 2]
+    else: # Eff Conc or Combined
+        A_bound = sol_reshaped[:, :, 1]
+        B_live = sol_reshaped[:, :, 2]
+        S = sol_reshaped[:, :, 4]
+        
+    density = B_live / vols
+    
+    # Growth Rate (mu) history - needed for models 2 & 3
+    mu_mat = params['mu_max'] * S / (params['Ks'] + S)
+
+    if model == "Effective Concentration":
+        A_eff = A_bound / np.maximum(density, 1e-12)
+        A_eff_n = np.power(A_eff, params['n_hill'])
+        K_D_n = params['K_D'] ** params['n_hill']
+        hill = A_eff_n / (K_D_n + A_eff_n + 1e-12)
+        lambda_matrix = params['lambda_max'] * hill
+
+    elif model == "Linear Lysis Rate":
+        A0_n = np.power(params['A0'], params['n_hill'])
+        K_A0_n = params['K_A0'] ** params['n_hill']
+        term_A0 = A0_n / (K_A0_n + A0_n + 1e-12)
+        lambda_matrix = params['a'] * term_A0 * mu_mat + params['b']
+
+    elif model == "Combined Model":
+        A_eff = A_bound / np.maximum(density, 1e-12)
+        A_eff_n = np.power(A_eff, params['n_hill'])
+        K_D_n = params['K_D'] ** params['n_hill']
+        hill = A_eff_n / (K_D_n + A_eff_n + 1e-12)
+        lambda_matrix = params['a'] * hill * mu_mat + params['b']
+        
+    return lambda_matrix
+
+
 def run_simulation(vols, initial_biomass, total_vols_range, params):
     BATCH_SIZE = 2000
     t_eval = np.arange(params['t_start'], params['t_end'] + params['dt']/100.0, params['dt'])
@@ -270,6 +315,9 @@ def run_simulation(vols, initial_biomass, total_vols_range, params):
     n_bins = len(bin_edges) - 1
     
     bin_sums = np.zeros((n_bins, N_STEPS))
+    # NEW: Accumulator for Lambda
+    lambda_bin_sums = np.zeros((n_bins, N_STEPS))
+
     bin_counts = np.zeros(n_bins)
     final_counts_all = np.zeros(N_occupied)
 
@@ -332,19 +380,23 @@ def run_simulation(vols, initial_biomass, total_vols_range, params):
             sol = odeint(func, y0_flat, t_eval, args=args)
             sol_reshaped = sol.reshape(N_STEPS, current_batch_size, num_vars)
             
-            # Get Continuous Result
+            # --- CALCULATE LAMBDA DYNAMICS ---
+            batch_lambda_vals = calculate_batch_lambda(sol_reshaped, t_eval, batch_vols, params, current_batch_size)
+            batch_lambda_T = batch_lambda_vals.T
+
+            # Get Continuous Result for Biomass
             batch_blive_cont = sol_reshaped[:, :, idx_Blive]
             
             # --- DISCRETIZATION STEP (CAMERA) ---
-            # Round the output to nearest integer pixel
             batch_blive = np.round(batch_blive_cont)
             
             final_c = np.mean(batch_blive[-2:, :], axis=0) if N_STEPS > 2 else batch_blive[-1, :]
-            # Thresholding: 1 cell ~ 5.5 pixels. Dead if < 2.0 pixels
             final_c = np.where(final_c < 2.0, 0.0, final_c)
             final_counts_all[start_idx:end_idx] = final_c
             
             batch_blive_T = batch_blive.T
+            
+            # Binning
             for b_idx in range(n_bins):
                 low, high = bin_edges[b_idx], bin_edges[b_idx + 1]
                 mask = (batch_vols >= low) & (batch_vols < high)
@@ -352,6 +404,8 @@ def run_simulation(vols, initial_biomass, total_vols_range, params):
                 
                 if count_in_bin > 0:
                     bin_sums[b_idx, :] += np.sum(batch_blive_T[mask, :], axis=0)
+                    # Accumulate Lambda
+                    lambda_bin_sums[b_idx, :] += np.sum(batch_lambda_T[mask, :], axis=0)
                     bin_counts[b_idx] += count_in_bin
 
         except Exception as e:
@@ -364,7 +418,7 @@ def run_simulation(vols, initial_biomass, total_vols_range, params):
     status_text.empty()
     progress_bar.empty()
     
-    return bin_sums, bin_counts, final_counts_all, t_eval, bin_edges
+    return bin_sums, bin_counts, final_counts_all, t_eval, bin_edges, lambda_bin_sums
 
 
 # ==========================================
@@ -425,6 +479,35 @@ def plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges):
             
     legend = Legend(items=legend_items, title="Volume Bins", click_policy="hide")
     p.add_layout(legend, 'right')
+    return p
+
+def plot_lambda_dynamics(t_eval, lambda_bin_sums, bin_counts, bin_edges):
+    p = figure(x_axis_label="Time (h)", y_axis_label="Lysis Rate λ (1/h)", 
+               height=800, width=1200, tools="pan,wheel_zoom,reset,save",
+               title="Average Lysis Rate over Time per Volume Bin")
+    
+    high_contrast_color_map = [cc.CET_D1[0], cc.CET_D1[80], cc.CET_D1[180], cc.CET_D1[230], cc.CET_D1[255]]
+    unique_bins = sum(1 for c in bin_counts if c > 0)
+    colors = linear_palette(high_contrast_color_map, max(1, unique_bins)) if unique_bins > 0 else []
+
+    color_idx = 0
+    legend_items = []
+
+    for i in range(len(bin_counts)):
+        if bin_counts[i] > 0:
+            mean_lambda = lambda_bin_sums[i, :] / bin_counts[i]
+            
+            low_exp = int(np.log10(bin_edges[i]))
+            high_exp = int(np.log10(bin_edges[i+1]))
+            label = f"10{int_to_superscript(low_exp)} - 10{int_to_superscript(high_exp)}"
+            
+            r = p.line(t_eval, mean_lambda, line_color=colors[color_idx], line_width=3, alpha=0.8)
+            legend_items.append((label, [r]))
+            color_idx += 1
+
+    legend = Legend(items=legend_items, location="top_right", click_policy="hide", title="Volume Bins")
+    p.add_layout(legend, 'right')
+    
     return p
 
 def plot_distribution(total_vols, occupied_vols):
@@ -627,13 +710,22 @@ def main():
         
     df_density, vc_val = calculate_vc_and_density(vols, initial_biomass, params['concentration'], MEAN_PIXELS)
     
-    bin_sums, bin_counts, final_biomass, t_eval, bin_edges = run_simulation(
+    # Updated return unpack
+    bin_sums, bin_counts, final_biomass, t_eval, bin_edges, lambda_bin_sums = run_simulation(
         vols, initial_biomass, (total_vols.min(), total_vols.max()), params
     )
     
     st.subheader("Results Analysis")
     
-    t1, t2, t3, t4, t5 = st.tabs(["Population Dynamics", "Droplet Distribution", "Initial Density & Vc", "Fold Change", "N0 vs Volume"])
+    # Updated Tab Structure
+    t1, t2, t3, t4, t5, t6 = st.tabs([
+        "Population Dynamics", 
+        "Droplet Distribution", 
+        "Initial Density & Vc", 
+        "Fold Change", 
+        "N0 vs Volume",
+        "Lysis Rate Dynamics"
+    ])
     
     with t1:
         st.markdown("##### Mean Growth curves (Normalized Biomass)")
@@ -718,6 +810,12 @@ def main():
         p = plot_n0_vs_volume(df_density, vc_val)
         streamlit_bokeh(p, use_container_width=True)
 
+    with t6:
+        st.markdown("##### Temporal Dynamics of Lysis Rate ($\lambda_D$)")
+        st.info("This plot shows the average instantaneous lysis rate experienced by droplets in each volume bin.")
+        
+        p_lambda = plot_lambda_dynamics(t_eval, lambda_bin_sums, bin_counts, bin_edges)
+        streamlit_bokeh(p_lambda, use_container_width=True)
+
 if __name__ == "__main__":
     main()
-
