@@ -254,10 +254,7 @@ def calculate_vc_and_density(vols, biomass, theoretical_conc, mean_pix):
 
 
 def calculate_batch_lambda(sol_reshaped, t_eval, vols, params, N_batch):
-    """
-    Reconstructs the Lambda_D (lysis rate) history from the solved states.
-    Returns matrix of shape (n_steps, n_droplets)
-    """
+    """Reconstructs the Lambda_D (lysis rate) history from the solved states."""
     model = params['model']
     n_steps = sol_reshaped.shape[0]
     lambda_matrix = np.zeros((n_steps, N_batch))
@@ -272,7 +269,7 @@ def calculate_batch_lambda(sol_reshaped, t_eval, vols, params, N_batch):
         
     density = B_live / vols
     
-    # Growth Rate (mu) history - needed for models 2 & 3
+    # Growth Rate (mu) history
     mu_mat = params['mu_max'] * S / (params['Ks'] + S)
 
     if model == "Effective Concentration":
@@ -297,6 +294,25 @@ def calculate_batch_lambda(sol_reshaped, t_eval, vols, params, N_batch):
         
     return lambda_matrix
 
+def calculate_batch_a_eff(sol_reshaped, vols, params, N_batch):
+    """Reconstructs the Effective Antibiotic Concentration (A_eff) history."""
+    model = params['model']
+    n_steps = sol_reshaped.shape[0]
+    
+    if model == "Linear Lysis Rate":
+        # For simple model, "Effective Conc" is just A0
+        return np.full((n_steps, N_batch), params['A0'])
+        
+    # For models with A_bound
+    A_bound = sol_reshaped[:, :, 1]
+    B_live = sol_reshaped[:, :, 2]
+    
+    density = B_live / vols
+    
+    # A_eff = A_bound / density
+    A_eff = A_bound / np.maximum(density, 1e-12)
+    
+    return A_eff
 
 def run_simulation(vols, initial_biomass, total_vols_range, params):
     BATCH_SIZE = 2000
@@ -315,8 +331,9 @@ def run_simulation(vols, initial_biomass, total_vols_range, params):
     n_bins = len(bin_edges) - 1
     
     bin_sums = np.zeros((n_bins, N_STEPS))
-    # NEW: Accumulator for Lambda
     lambda_bin_sums = np.zeros((n_bins, N_STEPS))
+    # NEW: Accumulator for A_eff
+    a_eff_bin_sums = np.zeros((n_bins, N_STEPS))
 
     bin_counts = np.zeros(n_bins)
     final_counts_all = np.zeros(N_occupied)
@@ -380,9 +397,13 @@ def run_simulation(vols, initial_biomass, total_vols_range, params):
             sol = odeint(func, y0_flat, t_eval, args=args)
             sol_reshaped = sol.reshape(N_STEPS, current_batch_size, num_vars)
             
-            # --- CALCULATE LAMBDA DYNAMICS ---
+            # --- CALCULATE INTERMEDIATES ---
             batch_lambda_vals = calculate_batch_lambda(sol_reshaped, t_eval, batch_vols, params, current_batch_size)
             batch_lambda_T = batch_lambda_vals.T
+            
+            # NEW: Calculate A_eff
+            batch_a_eff_vals = calculate_batch_a_eff(sol_reshaped, batch_vols, params, current_batch_size)
+            batch_a_eff_T = batch_a_eff_vals.T
 
             # Get Continuous Result for Biomass
             batch_blive_cont = sol_reshaped[:, :, idx_Blive]
@@ -404,8 +425,9 @@ def run_simulation(vols, initial_biomass, total_vols_range, params):
                 
                 if count_in_bin > 0:
                     bin_sums[b_idx, :] += np.sum(batch_blive_T[mask, :], axis=0)
-                    # Accumulate Lambda
                     lambda_bin_sums[b_idx, :] += np.sum(batch_lambda_T[mask, :], axis=0)
+                    # Accumulate A_eff
+                    a_eff_bin_sums[b_idx, :] += np.sum(batch_a_eff_T[mask, :], axis=0)
                     bin_counts[b_idx] += count_in_bin
 
         except Exception as e:
@@ -418,7 +440,7 @@ def run_simulation(vols, initial_biomass, total_vols_range, params):
     status_text.empty()
     progress_bar.empty()
     
-    return bin_sums, bin_counts, final_counts_all, t_eval, bin_edges, lambda_bin_sums
+    return bin_sums, bin_counts, final_counts_all, t_eval, bin_edges, lambda_bin_sums, a_eff_bin_sums
 
 
 # ==========================================
@@ -481,7 +503,7 @@ def plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges):
     p.add_layout(legend, 'right')
     return p
 
-def plot_lambda_dynamics(t_eval, lambda_bin_sums, bin_counts, bin_edges):
+def plot_lambda_dynamics(t_eval, lambda_bin_sums, bin_counts, bin_edges, params):
     p = figure(x_axis_label="Time (h)", y_axis_label="Lysis Rate λ (1/h)", 
                height=800, width=1200, tools="pan,wheel_zoom,reset,save",
                title="Average Lysis Rate over Time per Volume Bin")
@@ -504,6 +526,74 @@ def plot_lambda_dynamics(t_eval, lambda_bin_sums, bin_counts, bin_edges):
             r = p.line(t_eval, mean_lambda, line_color=colors[color_idx], line_width=3, alpha=0.8)
             legend_items.append((label, [r]))
             color_idx += 1
+
+    # Max Rate Ref Line
+    l_max_val = 0.0
+    if params['model'] == "Effective Concentration":
+        l_max_val = params['lambda_max']
+    elif params['model'] in ["Linear Lysis Rate", "Combined Model"]:
+        l_max_val = params['a'] * params['mu_max'] + params['b']
+
+    max_line = Span(location=l_max_val, dimension='width', line_color='red', 
+                    line_dash='dashed', line_width=2, line_alpha=0.7)
+    p.add_layout(max_line)
+    
+    r_max_dummy = p.line([], [], line_color='red', line_dash='dashed', line_width=2)
+    legend_items.insert(0, (f"Max Rate ({l_max_val:.2f}/h)", [r_max_dummy]))
+
+    legend = Legend(items=legend_items, location="top_right", click_policy="hide", title="Volume Bins")
+    p.add_layout(legend, 'right')
+    
+    return p
+
+def plot_a_eff_dynamics(t_eval, a_eff_bin_sums, bin_counts, bin_edges, params):
+    title_text = "Effective Antibiotic Conc. (Bound/Density)"
+    y_label = "Effective Conc. (A_eff)"
+    
+    if params['model'] == "Linear Lysis Rate":
+        title_text = "External Antibiotic Concentration (A0)"
+        y_label = "Concentration (A0)"
+    
+    p = figure(x_axis_label="Time (h)", y_axis_label=y_label, 
+               height=800, width=1200, tools="pan,wheel_zoom,reset,save",
+               title=title_text)
+    
+    high_contrast_color_map = [cc.CET_D1[0], cc.CET_D1[80], cc.CET_D1[180], cc.CET_D1[230], cc.CET_D1[255]]
+    unique_bins = sum(1 for c in bin_counts if c > 0)
+    colors = linear_palette(high_contrast_color_map, max(1, unique_bins)) if unique_bins > 0 else []
+
+    color_idx = 0
+    legend_items = []
+
+    for i in range(len(bin_counts)):
+        if bin_counts[i] > 0:
+            mean_a_eff = a_eff_bin_sums[i, :] / bin_counts[i]
+            
+            low_exp = int(np.log10(bin_edges[i]))
+            high_exp = int(np.log10(bin_edges[i+1]))
+            label = f"10{int_to_superscript(low_exp)} - 10{int_to_superscript(high_exp)}"
+            
+            r = p.line(t_eval, mean_a_eff, line_color=colors[color_idx], line_width=3, alpha=0.8)
+            legend_items.append((label, [r]))
+            color_idx += 1
+
+    # --- ADD THRESHOLD LINE (K_D or K_A0) ---
+    threshold_val = 0.0
+    label_text = "Threshold"
+    
+    if params['model'] == "Linear Lysis Rate":
+        threshold_val = params['K_A0']
+        label_text = "K_A0"
+    else:
+        threshold_val = params['K_D']
+        label_text = "K_D"
+
+    thresh_line = Span(location=threshold_val, dimension='width', line_color='red', 
+                       line_dash='dotted', line_width=3)
+    p.add_layout(thresh_line)
+    
+    r_thresh_dummy = p.line([], [], line_color='red', line_dash='dotted', line_width=3)
+    legend_items.insert(0, (f"{label_text} ({threshold_val:.0f})", [r_thresh_dummy]))
 
     legend = Legend(items=legend_items, location="top_right", click_policy="hide", title="Volume Bins")
     p.add_layout(legend, 'right')
@@ -710,21 +800,22 @@ def main():
         
     df_density, vc_val = calculate_vc_and_density(vols, initial_biomass, params['concentration'], MEAN_PIXELS)
     
-    # Updated return unpack
-    bin_sums, bin_counts, final_biomass, t_eval, bin_edges, lambda_bin_sums = run_simulation(
+    # Updated return unpack: added a_eff_sums
+    bin_sums, bin_counts, final_biomass, t_eval, bin_edges, lambda_bin_sums, a_eff_bin_sums = run_simulation(
         vols, initial_biomass, (total_vols.min(), total_vols.max()), params
     )
     
     st.subheader("Results Analysis")
     
-    # Updated Tab Structure
-    t1, t2, t3, t4, t5, t6 = st.tabs([
+    # Added "Antibiotic Dynamics" Tab
+    t1, t2, t3, t4, t5, t6, t7 = st.tabs([
         "Population Dynamics", 
         "Droplet Distribution", 
         "Initial Density & Vc", 
         "Fold Change", 
         "N0 vs Volume",
-        "Lysis Rate Dynamics"
+        "Lysis Rate Dynamics",
+        "Antibiotic Dynamics"
     ])
     
     with t1:
@@ -812,10 +903,17 @@ def main():
 
     with t6:
         st.markdown("##### Temporal Dynamics of Lysis Rate ($\lambda_D$)")
-        st.info("This plot shows the average instantaneous lysis rate experienced by droplets in each volume bin.")
+        st.info("The red dashed line represents the theoretical maximum lysis rate.")
         
-        p_lambda = plot_lambda_dynamics(t_eval, lambda_bin_sums, bin_counts, bin_edges)
+        p_lambda = plot_lambda_dynamics(t_eval, lambda_bin_sums, bin_counts, bin_edges, params)
         streamlit_bokeh(p_lambda, use_container_width=True)
+
+    with t7:
+        st.markdown("##### Effective Antibiotic Concentration ($A_{bound} / \\rho$)")
+        st.info("This metric normalizes bound antibiotic by cell density, making it comparable to $K_D$ (red dotted line).")
+        
+        p_aeff = plot_a_eff_dynamics(t_eval, a_eff_bin_sums, bin_counts, bin_edges, params)
+        streamlit_bokeh(p_aeff, use_container_width=True)
 
 if __name__ == "__main__":
     main()
