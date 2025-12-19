@@ -332,13 +332,10 @@ def run_simulation(vols, initial_biomass, total_vols_range, params):
     
     # --- ACCUMULATORS ---
     bin_sums = np.zeros((n_bins, N_STEPS))
-    lambda_bin_sums = np.zeros((n_bins, N_STEPS))
     a_eff_bin_sums = np.zeros((n_bins, N_STEPS))
-    
-    # NEW ACCUMULATORS
     density_bin_sums = np.zeros((n_bins, N_STEPS))
-    mu_bin_sums = np.zeros((n_bins, N_STEPS))
     a_bound_bin_sums = np.zeros((n_bins, N_STEPS))
+    net_rate_bin_sums = np.zeros((n_bins, N_STEPS))
 
     bin_counts = np.zeros(n_bins)
     final_counts_all = np.zeros(N_occupied)
@@ -375,9 +372,9 @@ def run_simulation(vols, initial_biomass, total_vols_range, params):
         
         if model == "Effective Concentration":
             y0_mat = np.zeros((current_batch_size, 5))
-            y0_mat[:, 0] = params['A0']    
+            y0_mat[:, 0] = params['A0']     
             y0_mat[:, 2] = batch_biomass  
-            y0_mat[:, 4] = params['S0']    
+            y0_mat[:, 4] = params['S0']     
             y0_flat = y0_mat.flatten()
             args = (current_batch_size, batch_vols, params['mu_max'], params['Ks'], params['Y'], 
                     params['K_on'], params['K_off'], params['lambda_max'], params['K_D'], params['n_hill'])
@@ -385,7 +382,7 @@ def run_simulation(vols, initial_biomass, total_vols_range, params):
         elif model == "Linear Lysis Rate":
             y0_mat = np.zeros((current_batch_size, 3))
             y0_mat[:, 0] = batch_biomass 
-            y0_mat[:, 2] = params['S0']    
+            y0_mat[:, 2] = params['S0']     
             y0_flat = y0_mat.flatten()
             A0_vec = np.full(current_batch_size, params['A0'])
             args = (current_batch_size, batch_vols, A0_vec, params['mu_max'], params['Ks'], params['Y'], 
@@ -431,6 +428,9 @@ def run_simulation(vols, initial_biomass, total_vols_range, params):
             else:
                 batch_abound_T = sol_reshaped[:, :, 1].T # Index 1 is A_bound
 
+            # *** 4. NET RATE (mu - lambda) ***
+            batch_net_rate = batch_mu_T - batch_lambda_T
+
             # --- DISCRETIZATION STEP (CAMERA) ---
             batch_blive = np.round(batch_blive_cont)
             
@@ -448,13 +448,14 @@ def run_simulation(vols, initial_biomass, total_vols_range, params):
                 
                 if count_in_bin > 0:
                     bin_sums[b_idx, :] += np.sum(batch_blive_T[mask, :], axis=0)
-                    lambda_bin_sums[b_idx, :] += np.sum(batch_lambda_T[mask, :], axis=0)
                     a_eff_bin_sums[b_idx, :] += np.sum(batch_a_eff_T[mask, :], axis=0)
                     
                     # New Accumulators
                     density_bin_sums[b_idx, :] += np.sum(batch_density_T[mask, :], axis=0)
-                    mu_bin_sums[b_idx, :] += np.sum(batch_mu_T[mask, :], axis=0)
                     a_bound_bin_sums[b_idx, :] += np.sum(batch_abound_T[mask, :], axis=0)
+                    
+                    # Net Rate Accumulator
+                    net_rate_bin_sums[b_idx, :] += np.sum(batch_net_rate[mask, :], axis=0)
                     
                     bin_counts[b_idx] += count_in_bin
 
@@ -469,7 +470,7 @@ def run_simulation(vols, initial_biomass, total_vols_range, params):
     progress_bar.empty()
     
     return (bin_sums, bin_counts, final_counts_all, t_eval, bin_edges, 
-            lambda_bin_sums, a_eff_bin_sums, density_bin_sums, mu_bin_sums, a_bound_bin_sums)
+            a_eff_bin_sums, density_bin_sums, a_bound_bin_sums, net_rate_bin_sums)
 
 
 # ==========================================
@@ -532,43 +533,35 @@ def plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges):
     p.add_layout(legend, 'right')
     return p
 
-def plot_lambda_dynamics(t_eval, lambda_bin_sums, bin_counts, bin_edges, params):
-    p = figure(x_axis_label="Time (h)", y_axis_label="Lysis Rate λ (1/h)", 
+# *** NEW PLOTTING FUNCTION FOR NET RATE ***
+def plot_net_growth_dynamics(t_eval, net_rate_bin_sums, bin_counts, bin_edges):
+    p = figure(x_axis_label="Time (h)", y_axis_label="Net Growth Rate (μ - λ) [1/h]", 
                height=800, width=1200, tools="pan,wheel_zoom,reset,save",
-               title="Average Lysis Rate over Time per Volume Bin")
+               title="Net Growth Rate (μ - λ) Dynamics")
     
     high_contrast_color_map = [cc.CET_D1[0], cc.CET_D1[80], cc.CET_D1[180], cc.CET_D1[230], cc.CET_D1[255]]
+    
     unique_bins = sum(1 for c in bin_counts if c > 0)
     colors = linear_palette(high_contrast_color_map, max(1, unique_bins)) if unique_bins > 0 else []
 
     color_idx = 0
     legend_items = []
 
+    # Zero line for reference
+    zero_line = Span(location=0, dimension='width', line_color='white', line_dash='dotted', line_width=2)
+    p.add_layout(zero_line)
+
     for i in range(len(bin_counts)):
         if bin_counts[i] > 0:
-            mean_lambda = lambda_bin_sums[i, :] / bin_counts[i]
+            mean_net_rate = net_rate_bin_sums[i, :] / bin_counts[i]
             
             low_exp = int(np.log10(bin_edges[i]))
             high_exp = int(np.log10(bin_edges[i+1]))
             label = f"10{int_to_superscript(low_exp)} - 10{int_to_superscript(high_exp)}"
             
-            r = p.line(t_eval, mean_lambda, line_color=colors[color_idx], line_width=3, alpha=0.8)
+            r = p.line(t_eval, mean_net_rate, line_color=colors[color_idx], line_width=3, alpha=0.8)
             legend_items.append((label, [r]))
             color_idx += 1
-
-    # Max Rate Ref Line
-    l_max_val = 0.0
-    if params['model'] == "Effective Concentration":
-        l_max_val = params['lambda_max']
-    elif params['model'] in ["Linear Lysis Rate", "Combined Model"]:
-        l_max_val = params['a'] * params['mu_max'] + params['b']
-
-    max_line = Span(location=l_max_val, dimension='width', line_color='red', 
-                    line_dash='dashed', line_width=2, line_alpha=0.7)
-    p.add_layout(max_line)
-    
-    r_max_dummy = p.line([], [], line_color='red', line_dash='dashed', line_width=2)
-    legend_items.insert(0, (f"Max Rate ({l_max_val:.2f}/h)", [r_max_dummy]))
 
     legend = Legend(items=legend_items, location="top_right", click_policy="hide", title="Volume Bins")
     p.add_layout(legend, 'right')
@@ -629,8 +622,6 @@ def plot_a_eff_dynamics(t_eval, a_eff_bin_sums, bin_counts, bin_edges, params):
     
     return p
 
-# --- NEW PLOTTING FUNCTIONS ---
-
 def plot_density_dynamics(t_eval, density_bin_sums, bin_counts, bin_edges):
     p = figure(x_axis_label="Time (h)", y_axis_label="Cell Density (Biomass/Volume)", 
                height=800, width=1200, tools="pan,wheel_zoom,reset,save",
@@ -658,42 +649,6 @@ def plot_density_dynamics(t_eval, density_bin_sums, bin_counts, bin_edges):
             color_idx += 1
 
     legend = Legend(items=legend_items, location="top_right", click_policy="hide", title="Volume Bins")
-    p.add_layout(legend, 'right')
-    return p
-
-def plot_mu_dynamics(t_eval, mu_bin_sums, bin_counts, bin_edges, params):
-    p = figure(x_axis_label="Time (h)", y_axis_label="Growth Rate μ (1/h)", 
-               height=800, width=1200, tools="pan,wheel_zoom,reset,save",
-               title="Average Growth Rate (μ) over Time")
-    
-    high_contrast_color_map = [cc.CET_D1[0], cc.CET_D1[80], cc.CET_D1[180], cc.CET_D1[230], cc.CET_D1[255]]
-    unique_bins = sum(1 for c in bin_counts if c > 0)
-    colors = linear_palette(high_contrast_color_map, max(1, unique_bins)) if unique_bins > 0 else []
-
-    color_idx = 0
-    legend_items = []
-
-    for i in range(len(bin_counts)):
-        if bin_counts[i] > 0:
-            mean_vals = mu_bin_sums[i, :] / bin_counts[i]
-
-            low_exp = int(np.log10(bin_edges[i]))
-            high_exp = int(np.log10(bin_edges[i+1]))
-            label = f"10{int_to_superscript(low_exp)} - 10{int_to_superscript(high_exp)}"
-            
-            r = p.line(t_eval, mean_vals, line_color=colors[color_idx], line_width=3, alpha=0.8)
-            legend_items.append((label, [r]))
-            color_idx += 1
-
-    # Max Growth Rate Line
-    max_line = Span(location=params['mu_max'], dimension='width', line_color='green', 
-                    line_dash='dashed', line_width=2, line_alpha=0.7)
-    p.add_layout(max_line)
-    
-    r_max_dummy = p.line([], [], line_color='green', line_dash='dashed', line_width=2)
-    legend_items.insert(0, (f"μ Max ({params['mu_max']}/h)", [r_max_dummy]))
-
-    legend = Legend(items=legend_items, location="bottom_left", click_policy="hide", title="Volume Bins")
     p.add_layout(legend, 'right')
     return p
 
@@ -930,8 +885,9 @@ def main():
     df_density, vc_val = calculate_vc_and_density(vols, initial_biomass, params['concentration'], MEAN_PIXELS)
     
     # --- Run Simulation ---
+    # Updated unpack to include net_rate_bin_sums and removed mu/lambda sums
     (bin_sums, bin_counts, final_biomass, t_eval, bin_edges, 
-     lambda_bin_sums, a_eff_bin_sums, density_bin_sums, mu_bin_sums, a_bound_bin_sums) = run_simulation(
+     a_eff_bin_sums, density_bin_sums, a_bound_bin_sums, net_rate_bin_sums) = run_simulation(
         vols, initial_biomass, (total_vols.min(), total_vols.max()), params
     )
     
@@ -950,10 +906,9 @@ def main():
         "Initial Density & Vc", 
         "Fold Change", 
         "N0 vs Volume",
-        "Lysis Rate Dynamics",
+        "Net Growth Rate (μ - λ)", # Merged Figure
         "Antibiotic Dynamics",
         "Density Dynamics",
-        "Growth Rate Dynamics",
         "Bound Antibiotic"
     ]
 
@@ -1033,12 +988,13 @@ def main():
             p = plot_n0_vs_volume(df_density, vc_val)
             streamlit_bokeh(p, use_container_width=True)
 
-        # --- 6. Lysis Rate ---
-        elif selected_plot == "Lysis Rate Dynamics":
-            st.markdown("#### Temporal Dynamics of Lysis Rate ($\lambda_D$)")
-            st.info("The red dashed line represents the theoretical maximum lysis rate.")
-            p_lambda = plot_lambda_dynamics(t_eval, lambda_bin_sums, bin_counts, bin_edges, params)
-            streamlit_bokeh(p_lambda, use_container_width=True)
+        # --- 6. NET GROWTH RATE (Merged Figure) ---
+        elif selected_plot == "Net Growth Rate (μ - λ)":
+            st.markdown("#### Net Growth Rate ($\mu - \lambda_D$)")
+            st.info("This plot shows the effective growth rate. Positive values mean net growth, negative values mean net death (lysis > growth).")
+            
+            p_net = plot_net_growth_dynamics(t_eval, net_rate_bin_sums, bin_counts, bin_edges)
+            streamlit_bokeh(p_net, use_container_width=True)
 
         # --- 7. Antibiotic Dynamics ---
         elif selected_plot == "Antibiotic Dynamics":
@@ -1054,14 +1010,7 @@ def main():
             p_dens = plot_density_dynamics(t_eval, density_bin_sums, bin_counts, bin_edges)
             streamlit_bokeh(p_dens, use_container_width=True)
 
-        # --- 9. Growth Rate Dynamics ---
-        elif selected_plot == "Growth Rate Dynamics":
-            st.markdown("#### Growth Rate Dynamics ($\mu$)")
-            st.info("Shows nutrient depletion. If $\mu$ drops to 0, substrate is exhausted.")
-            p_mu = plot_mu_dynamics(t_eval, mu_bin_sums, bin_counts, bin_edges, params)
-            streamlit_bokeh(p_mu, use_container_width=True)
-
-        # --- 10. Bound Antibiotic ---
+        # --- 9. Bound Antibiotic ---
         elif selected_plot == "Bound Antibiotic":
             st.markdown("#### Bound Antibiotic ($A_{bound}$)")
             st.info("Shows the absolute amount of antibiotic bound to cells in a droplet.")
@@ -1073,4 +1022,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
