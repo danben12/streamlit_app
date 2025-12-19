@@ -892,7 +892,7 @@ def convert_df(df):
     return df.to_csv(index=False).encode('utf-8')
 
 # ==========================================
-# 6. MAIN EXECUTION
+# 6. MAIN EXECUTION (Refactored for Single Figure Display)
 # ==========================================
 
 def main():
@@ -906,6 +906,7 @@ def main():
     
     check_debounce()
     
+    # --- Generate Data ---
     vols, counts, initial_biomass, total_vols = generate_population(
         params['mean_log10'], params['std_log10'], params['n_samples'], 
         params['concentration'], MEAN_PIXELS, STD_PIXELS
@@ -915,26 +916,35 @@ def main():
     N_occupied = len(vols)
     
     pct = (N_occupied / n_trimmed * 100) if n_trimmed > 0 else 0.0
-    st.write(f"**Simulation Stats:** **{n_trimmed}** remain after trimming. "
-             f"**{N_occupied}** are occupied (**{pct:.2f}%**).")
-    st.markdown(f"### Antibiotic Concentration ($A_0$): {params['A0']}")
     
+    # --- Header Metrics ---
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Total Droplets (Simulated)", f"{n_trimmed:,}")
+    col2.metric("Occupied Droplets", f"{N_occupied:,} ({pct:.2f}%)")
+    col3.metric("Antibiotic Conc (A0)", f"{params['A0']}")
+
     if N_occupied == 0:
         st.error("No occupied droplets found. Try increasing Concentration or Mean Volume.")
         st.stop()
         
     df_density, vc_val = calculate_vc_and_density(vols, initial_biomass, params['concentration'], MEAN_PIXELS)
     
-    # Updated return unpack: added density_sums, mu_sums, a_bound_sums
+    # --- Run Simulation ---
     (bin_sums, bin_counts, final_biomass, t_eval, bin_edges, 
      lambda_bin_sums, a_eff_bin_sums, density_bin_sums, mu_bin_sums, a_bound_bin_sums) = run_simulation(
         vols, initial_biomass, (total_vols.min(), total_vols.max()), params
     )
     
-    st.subheader("Results Analysis")
+    st.divider()
     
-    # Added New Tabs
-    t1, t2, t3, t4, t5, t6, t7, t8, t9, t10 = st.tabs([
+    # ==========================================
+    # NEW UI LAYOUT: SELECTOR INSTEAD OF TABS
+    # ==========================================
+    
+    st.subheader("Results Analysis")
+
+    # The list of available figures
+    plot_options = [
         "Population Dynamics", 
         "Droplet Distribution", 
         "Initial Density & Vc", 
@@ -945,126 +955,122 @@ def main():
         "Density Dynamics",
         "Growth Rate Dynamics",
         "Bound Antibiotic"
-    ])
-    
-    with t1:
-        st.markdown("##### Mean Growth curves (Normalized Biomass)")
-        
-        # 1. PREPARE DATA
-        data_dyn = {'Time': t_eval}
-        for i in range(len(bin_counts)):
-            if bin_counts[i] > 0:
-                mean_traj = bin_sums[i, :] / bin_counts[i]
-                low_exp = int(np.log10(bin_edges[i]))
-                high_exp = int(np.log10(bin_edges[i+1]))
-                
-                initial_val = mean_traj[0]
-                if initial_val > 1e-9:
-                    norm_traj = mean_traj / initial_val
-                else:
-                    norm_traj = mean_traj
-                
-                col_name = f"Bin_10^{low_exp}_to_10^{high_exp}_(n={int(bin_counts[i])})"
-                data_dyn[col_name] = norm_traj
-                
-        df_dynamics = pd.DataFrame(data_dyn)
-        
-        # 2. DOWNLOAD BUTTON (Now Above Figure)
-        st.download_button("Download Dynamics Data", data=convert_df(df_dynamics), 
-                           file_name="dynamics_curves.csv", mime="text/csv")
-        
-        # 3. PLOT
-        p = plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges)
-        streamlit_bokeh(p, use_container_width=True)
-        
-    with t2:
-        st.markdown("##### Droplet Distribution: Total vs Occupied")
-        
-        # 1. PREPARE DATA
-        max_len = max(len(total_vols), len(vols))
-        total_vols_pad = np.pad(total_vols, (0, max_len - len(total_vols)), constant_values=np.nan)
-        occupied_vols_pad = np.pad(vols, (0, max_len - len(vols)), constant_values=np.nan)
-        df_dist = pd.DataFrame({'Total_Droplet_Volumes': total_vols_pad, 'Occupied_Droplet_Volumes': occupied_vols_pad})
-        
-        # 2. DOWNLOAD BUTTON (Above)
-        st.download_button("Download Distribution Data", data=convert_df(df_dist), 
-                           file_name="volume_distribution.csv", mime="text/csv")
-        
-        # 3. PLOT
-        p = plot_distribution(total_vols, vols)
-        streamlit_bokeh(p, use_container_width=True)
-        
-    with t3:
-        st.markdown("##### Initial Density & Vc Calculation")
-        
-        # 1. DOWNLOAD BUTTON (Above) - df_density already exists
-        st.download_button("Download Density Data", data=convert_df(df_density), 
-                           file_name="initial_density_data.csv", mime="text/csv")
-        
-        # 2. PLOT
-        p = plot_initial_density_vc(df_density, vc_val, params['concentration'])
-        streamlit_bokeh(p, use_container_width=True)
-        
-    with t4:
-        st.markdown("##### Biomass Fold Change vs Volume")
-        
-        # 1. GET DATA AND FIGURE (Must call function first)
-        p, df_fc = plot_fold_change(vols, initial_biomass, final_biomass, vc_val)
-        
-        # 2. DOWNLOAD BUTTON (Above)
-        st.download_button("Download FoldChange Data", data=convert_df(df_fc), 
-                           file_name="fold_change_data.csv", mime="text/csv")
-        
-        # 3. PLOT
-        streamlit_bokeh(p, use_container_width=True)
+    ]
 
-    with t5:
-        st.markdown(f"##### Initial Biomass (N0) vs Volume")
-        st.info(f"Regression is calculated for Volumes ≥ Vc ({vc_val:.1f} μm³)")
+    # The Selector - Acts as the "Tab Switcher"
+    selected_plot = st.selectbox("Select Figure to Display:", plot_options)
+
+    # Container for the single figure
+    with st.container():
         
-        # 1. DOWNLOAD BUTTON (Above)
-        st.download_button("Download N0 vs Vol Data", data=convert_df(df_density), 
-                           file_name="n0_vs_vol_data.csv", mime="text/csv")
-        
-        # 2. PLOT
-        p = plot_n0_vs_volume(df_density, vc_val)
-        streamlit_bokeh(p, use_container_width=True)
+        # --- 1. Population Dynamics ---
+        if selected_plot == "Population Dynamics":
+            st.markdown("#### Mean Growth curves (Normalized Biomass)")
+            
+            # Prepare Data
+            data_dyn = {'Time': t_eval}
+            for i in range(len(bin_counts)):
+                if bin_counts[i] > 0:
+                    mean_traj = bin_sums[i, :] / bin_counts[i]
+                    initial_val = mean_traj[0]
+                    norm_traj = mean_traj / initial_val if initial_val > 1e-9 else mean_traj
+                    
+                    low_exp = int(np.log10(bin_edges[i]))
+                    high_exp = int(np.log10(bin_edges[i+1]))
+                    col_name = f"Bin_10^{low_exp}_to_10^{high_exp}_(n={int(bin_counts[i])})"
+                    data_dyn[col_name] = norm_traj
+                    
+            df_dynamics = pd.DataFrame(data_dyn)
+            
+            col_d1, col_d2 = st.columns([1, 4])
+            with col_d1:
+                st.download_button("Download CSV", data=convert_df(df_dynamics), 
+                                   file_name="dynamics_curves.csv", mime="text/csv")
+            
+            p = plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges)
+            streamlit_bokeh(p, use_container_width=True)
 
-    with t6:
-        st.markdown("##### Temporal Dynamics of Lysis Rate ($\lambda_D$)")
-        st.info("The red dashed line represents the theoretical maximum lysis rate.")
-        
-        p_lambda = plot_lambda_dynamics(t_eval, lambda_bin_sums, bin_counts, bin_edges, params)
-        streamlit_bokeh(p_lambda, use_container_width=True)
+        # --- 2. Droplet Distribution ---
+        elif selected_plot == "Droplet Distribution":
+            st.markdown("#### Droplet Distribution: Total vs Occupied")
+            
+            max_len = max(len(total_vols), len(vols))
+            total_vols_pad = np.pad(total_vols, (0, max_len - len(total_vols)), constant_values=np.nan)
+            occupied_vols_pad = np.pad(vols, (0, max_len - len(vols)), constant_values=np.nan)
+            df_dist = pd.DataFrame({'Total_Droplet_Volumes': total_vols_pad, 'Occupied_Droplet_Volumes': occupied_vols_pad})
+            
+            st.download_button("Download CSV", data=convert_df(df_dist), 
+                               file_name="volume_distribution.csv", mime="text/csv")
+            
+            p = plot_distribution(total_vols, vols)
+            streamlit_bokeh(p, use_container_width=True)
 
-    with t7:
-        st.markdown("##### Effective Antibiotic Concentration ($A_{bound} / \\rho$)")
-        st.info("This metric normalizes bound antibiotic by cell density, making it comparable to $K_D$ (red dotted line).")
-        
-        p_aeff = plot_a_eff_dynamics(t_eval, a_eff_bin_sums, bin_counts, bin_edges, params)
-        streamlit_bokeh(p_aeff, use_container_width=True)
+        # --- 3. Initial Density & Vc ---
+        elif selected_plot == "Initial Density & Vc":
+            st.markdown("#### Initial Density & Vc Calculation")
+            st.download_button("Download CSV", data=convert_df(df_density), 
+                               file_name="initial_density_data.csv", mime="text/csv")
+            
+            p = plot_initial_density_vc(df_density, vc_val, params['concentration'])
+            streamlit_bokeh(p, use_container_width=True)
 
-    # --- NEW TABS ---
-    with t8:
-        st.markdown("##### Cell Density Dynamics ($B/V$)")
-        st.info("Log-scale plot. Shows how biomass density changes over time for each bin.")
-        p_dens = plot_density_dynamics(t_eval, density_bin_sums, bin_counts, bin_edges)
-        streamlit_bokeh(p_dens, use_container_width=True)
+        # --- 4. Fold Change ---
+        elif selected_plot == "Fold Change":
+            st.markdown("#### Biomass Fold Change vs Volume")
+            p, df_fc = plot_fold_change(vols, initial_biomass, final_biomass, vc_val)
+            
+            st.download_button("Download CSV", data=convert_df(df_fc), 
+                               file_name="fold_change_data.csv", mime="text/csv")
+            streamlit_bokeh(p, use_container_width=True)
 
-    with t9:
-        st.markdown("##### Growth Rate Dynamics ($\mu$)")
-        st.info("Shows nutrient depletion. If $\mu$ drops to 0, substrate is exhausted.")
-        p_mu = plot_mu_dynamics(t_eval, mu_bin_sums, bin_counts, bin_edges, params)
-        streamlit_bokeh(p_mu, use_container_width=True)
+        # --- 5. N0 vs Volume ---
+        elif selected_plot == "N0 vs Volume":
+            st.markdown(f"#### Initial Biomass (N0) vs Volume")
+            st.info(f"Regression is calculated for Volumes ≥ Vc ({vc_val:.1f} μm³)")
+            st.download_button("Download CSV", data=convert_df(df_density), 
+                               file_name="n0_vs_vol_data.csv", mime="text/csv")
+            
+            p = plot_n0_vs_volume(df_density, vc_val)
+            streamlit_bokeh(p, use_container_width=True)
 
-    with t10:
-        st.markdown("##### Bound Antibiotic ($A_{bound}$)")
-        st.info("Shows the absolute amount of antibiotic bound to cells in a droplet.")
-        if params['model'] == "Linear Lysis Rate":
-            st.warning("This model does not simulate binding kinetics.")
-        else:
-            p_abound = plot_abound_dynamics(t_eval, a_bound_bin_sums, bin_counts, bin_edges)
-            streamlit_bokeh(p_abound, use_container_width=True)
+        # --- 6. Lysis Rate ---
+        elif selected_plot == "Lysis Rate Dynamics":
+            st.markdown("#### Temporal Dynamics of Lysis Rate ($\lambda_D$)")
+            st.info("The red dashed line represents the theoretical maximum lysis rate.")
+            p_lambda = plot_lambda_dynamics(t_eval, lambda_bin_sums, bin_counts, bin_edges, params)
+            streamlit_bokeh(p_lambda, use_container_width=True)
+
+        # --- 7. Antibiotic Dynamics ---
+        elif selected_plot == "Antibiotic Dynamics":
+            st.markdown("#### Effective Antibiotic Concentration ($A_{bound} / \\rho$)")
+            st.info("This metric normalizes bound antibiotic by cell density.")
+            p_aeff = plot_a_eff_dynamics(t_eval, a_eff_bin_sums, bin_counts, bin_edges, params)
+            streamlit_bokeh(p_aeff, use_container_width=True)
+
+        # --- 8. Density Dynamics ---
+        elif selected_plot == "Density Dynamics":
+            st.markdown("#### Cell Density Dynamics ($B/V$)")
+            st.info("Log-scale plot. Shows how biomass density changes over time for each bin.")
+            p_dens = plot_density_dynamics(t_eval, density_bin_sums, bin_counts, bin_edges)
+            streamlit_bokeh(p_dens, use_container_width=True)
+
+        # --- 9. Growth Rate Dynamics ---
+        elif selected_plot == "Growth Rate Dynamics":
+            st.markdown("#### Growth Rate Dynamics ($\mu$)")
+            st.info("Shows nutrient depletion. If $\mu$ drops to 0, substrate is exhausted.")
+            p_mu = plot_mu_dynamics(t_eval, mu_bin_sums, bin_counts, bin_edges, params)
+            streamlit_bokeh(p_mu, use_container_width=True)
+
+        # --- 10. Bound Antibiotic ---
+        elif selected_plot == "Bound Antibiotic":
+            st.markdown("#### Bound Antibiotic ($A_{bound}$)")
+            st.info("Shows the absolute amount of antibiotic bound to cells in a droplet.")
+            if params['model'] == "Linear Lysis Rate":
+                st.warning("This model does not simulate binding kinetics.")
+            else:
+                p_abound = plot_abound_dynamics(t_eval, a_bound_bin_sums, bin_counts, bin_edges)
+                streamlit_bokeh(p_abound, use_container_width=True)
 
 if __name__ == "__main__":
     main()
+
