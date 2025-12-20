@@ -315,7 +315,7 @@ def calculate_batch_a_eff(sol_reshaped, vols, params, N_batch):
     return A_eff
 
 def run_simulation(vols, initial_biomass, total_vols_range, params):
-    BATCH_SIZE = 2000
+    BATCH_SIZE = 5000
     t_eval = np.arange(params['t_start'], params['t_end'] + params['dt']/100.0, params['dt'])
     
     if len(t_eval) < 2:
@@ -1022,3 +1022,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
