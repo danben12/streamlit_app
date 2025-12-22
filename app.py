@@ -656,6 +656,7 @@ def plot_density_dynamics(t_eval, density_bin_sums, bin_counts, bin_edges):
     for i in range(len(bin_counts)):
         if bin_counts[i] > 0:
             mean_vals = density_bin_sums[i, :] / bin_counts[i]
+            # Log scale handling for zero
             mean_vals = np.where(mean_vals <= 0, np.nan, mean_vals)
 
             low_exp = int(np.log10(bin_edges[i]))
@@ -832,7 +833,6 @@ def plot_fold_change(vols, initial_biomass, final_biomass, vc_val):
     ], location='top_right')
     p.add_layout(legend, 'right')
     
-    # RETURN BOTH PLOT AND DATAFRAME FOR DOWNLOAD
     return p, df_fc
 
 def plot_n0_vs_volume(df, Vc):
