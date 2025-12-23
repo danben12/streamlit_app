@@ -465,7 +465,7 @@ def run_simulation(vols, initial_biomass, total_vols_range, params):
             # ODEINT CALL
             # Note: We are passing the Numba JIT function 'func' directly. 
             # Scipy interfaces with it via C-API which is faster than pure Python.
-            sol = odeint(func, y0_flat, t_eval, args=args)
+            sol = odeint(func, y0_flat, t_eval, args=args,rtol=1e-3, atol=1e-4)
             sol_reshaped = sol.reshape(N_STEPS, current_batch_size, num_vars)
             
             # --- CALCULATE INTERMEDIATES (OPTIMIZED) ---
@@ -1065,3 +1065,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
