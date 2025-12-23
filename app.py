@@ -12,9 +12,6 @@ from scipy.stats import linregress
 from bokeh.layouts import column
 from bokeh.models import Div
 
-# --- NUMBA IMPORTS ---
-from numba import njit, prange
-
 # ==========================================
 # 1. PAGE CONFIG & STATE MANAGEMENT
 # ==========================================
@@ -35,24 +32,17 @@ def check_debounce(delay=0.7):
         time.sleep(0.1)
 
 # ==========================================
-# 2. ODE MATH MODELS (OPTIMIZED)
+# 2. ODE MATH MODELS
 # ==========================================
 
-@njit(cache=True)
 def vec_effective_concentration(y_flat, t, N, V, mu_max, Ks, Y, K_on, K_off, lambda_max, K_D, n):
-    # Numba handles reshapes efficiently if arrays are contiguous
-    y = y_flat.reshape((N, 5))
+    y = y_flat.reshape(N, 5)
     A_free = y[:, 0]
     A_bound = y[:, 1]
     B_live = y[:, 2]
     S = y[:, 4]
     
-    # Pre-allocate output to avoid memory overhead
-    # In pure numpy we stacked, here we can fill directly or stack. 
-    # Stacking is fine in modern Numba.
-    
     density = B_live / V
-    # Prevent division by zero with maximum
     A_eff = A_bound / np.maximum(density, 1e-12) 
     mu = mu_max * S / (Ks + S)
     
@@ -68,13 +58,12 @@ def vec_effective_concentration(y_flat, t, N, V, mu_max, Ks, Y, K_on, K_off, lam
     dA_free_dt = -K_on * A_free * density + K_off * A_bound + lambda_D * A_bound
     dA_bound_dt = K_on * A_free * density - K_off * A_bound - lambda_D * A_bound
     
-    # Numba supports stack since version 0.51
-    dY = np.stack((dA_free_dt, dA_bound_dt, dB_live_dt, dB_dead_dt, dS_dt), axis=1)
+    dY = np.stack([dA_free_dt, dA_bound_dt, dB_live_dt, dB_dead_dt, dS_dt], axis=1)
     return dY.flatten()
 
-@njit(cache=True)
+
 def vec_linear_lysis(y_flat, t, N, V, A0_vec, mu_max, Ks, Y, a, b, K_A0, n):
-    y = y_flat.reshape((N, 3))
+    y = y_flat.reshape(N, 3)
     B_live = y[:, 0]
     S = y[:, 2]
     
@@ -91,12 +80,12 @@ def vec_linear_lysis(y_flat, t, N, V, A0_vec, mu_max, Ks, Y, a, b, K_A0, n):
     dB_dead_dt = lambda_D * B_live
     dS_dt = - (1 / Y) * mu * density
     
-    dY = np.stack((dB_live_dt, dB_dead_dt, dS_dt), axis=1)
+    dY = np.stack([dB_live_dt, dB_dead_dt, dS_dt], axis=1)
     return dY.flatten()
 
-@njit(cache=True)
+
 def vec_combined_model(y_flat, t, N, V, mu_max, Ks, Y, K_on, K_off, K_D, n, a, b):
-    y = y_flat.reshape((N, 5))
+    y = y_flat.reshape(N, 5)
     A_free = y[:, 0]
     A_bound = y[:, 1]
     B_live = y[:, 2]
@@ -119,8 +108,9 @@ def vec_combined_model(y_flat, t, N, V, mu_max, Ks, Y, K_on, K_off, K_D, n, a, b
     dA_free_dt = -K_on * A_free * density + K_off * A_bound + lambda_D * A_bound
     dA_bound_dt = K_on * A_free * density - K_off * A_bound - lambda_D * A_bound
     
-    dY = np.stack((dA_free_dt, dA_bound_dt, dB_live_dt, dB_dead_dt, dS_dt), axis=1)
+    dY = np.stack([dA_free_dt, dA_bound_dt, dB_live_dt, dB_dead_dt, dS_dt], axis=1)
     return dY.flatten()
+
 
 # ==========================================
 # 3. UI COMPONENTS (SIDEBAR)
@@ -190,22 +180,24 @@ def render_sidebar():
 
 
 # ==========================================
-# 4. CORE LOGIC & CALCULATION FUNCTIONS (OPTIMIZED)
+# 4. CORE LOGIC & CALCULATION FUNCTIONS
 # ==========================================
 
-@njit(cache=True)
-def _generate_population_fast(n, mean, std, conc, mean_pix, std_pix):
+@st.cache_data
+def generate_population(mean, std, n, conc, mean_pix, std_pix):
+    """
+    Generates population with integer pixel rounding (camera simulation).
+    """
     # 1. Droplet Volumes
-    log_data = np.random.normal(mean, std, int(n))
+    log_data = np.random.normal(loc=mean, scale=std, size=int(n))
     volume_data = 10 ** log_data
     
-    # Use boolean indexing (supported in Numba)
     mask_vol = (volume_data >= 1000) & (volume_data <= 1e8)
     trimmed_vol = volume_data[mask_vol]
     
     # 2. Poisson loading (Cell Counts)
     lambdas = trimmed_vol * conc
-    cell_counts = np.random.poisson(lambdas)
+    cell_counts = np.random.poisson(lam=lambdas)
     
     # Filter occupied
     occupied_mask = cell_counts > 0
@@ -222,19 +214,19 @@ def _generate_population_fast(n, mean, std, conc, mean_pix, std_pix):
     noise = np.random.normal(0, 1, n_occupied) * noise_scale
     
     raw_biomass = base_biomass + noise
+    
+    # --- DISCRETIZATION STEP ---
+    # Round to nearest integer to simulate pixel counting camera
     final_biomass = np.round(raw_biomass)
+    
+    # Physics check: Biomass cannot be zero if occupied
     final_biomass = np.maximum(final_biomass, 1.0) 
     
     return final_vols, final_counts, final_biomass, trimmed_vol
 
-@st.cache_data
-def generate_population(mean, std, n, conc, mean_pix, std_pix):
-    # Wrapper to call the JIT function from Streamlit
-    return _generate_population_fast(n, mean, std, conc, mean_pix, std_pix)
-
 
 def calculate_vc_and_density(vols, biomass, theoretical_conc, mean_pix):
-    # Pandas is not Numba-compatible, keeping as is
+    # Effective count for density comparison
     effective_count = biomass / mean_pix
     
     df = pd.DataFrame({'Volume': vols, 'Biomass': biomass, 'Count': effective_count})
@@ -251,8 +243,6 @@ def calculate_vc_and_density(vols, biomass, theoretical_conc, mean_pix):
     
     closest_index = differences.idxmin()
     
-    # This loop is small (length of diffs), but could be optimized if very slow. 
-    # Usually negligible compared to ODEs.
     for i in range(len(differences) - convergence_window):
         window_mean_diff = differences.iloc[i:i + convergence_window].mean()
         if window_mean_diff <= tolerance:
@@ -263,118 +253,69 @@ def calculate_vc_and_density(vols, biomass, theoretical_conc, mean_pix):
     return df, vc_val
 
 
-@njit(cache=True)
-def calculate_batch_lambda(sol_reshaped, t_eval, vols, model_type_int, 
-                         mu_max, Ks, K_D, n_hill, lambda_max, A0, K_A0, a, b):
-    # Helper: model_type_int -> 0: EffConc, 1: Linear, 2: Combined
+def calculate_batch_lambda(sol_reshaped, t_eval, vols, params, N_batch):
+    """Reconstructs the Lambda_D (lysis rate) history from the solved states."""
+    model = params['model']
     n_steps = sol_reshaped.shape[0]
-    N_batch = sol_reshaped.shape[1]
     lambda_matrix = np.zeros((n_steps, N_batch))
     
-    if model_type_int == 1: # Linear
+    if model == "Linear Lysis Rate":
         B_live = sol_reshaped[:, :, 0]
         S = sol_reshaped[:, :, 2]
-        A_bound = np.zeros_like(B_live) # Placeholder
     else: # Eff Conc or Combined
         A_bound = sol_reshaped[:, :, 1]
         B_live = sol_reshaped[:, :, 2]
         S = sol_reshaped[:, :, 4]
         
-    # Broadcasting in Numba works well for these shapes
-    # vols is (N_batch,), B_live is (steps, N_batch)
     density = B_live / vols
     
     # Growth Rate (mu) history
-    mu_mat = mu_max * S / (Ks + S)
+    mu_mat = params['mu_max'] * S / (params['Ks'] + S)
 
-    if model_type_int == 0: # Eff Conc
+    if model == "Effective Concentration":
         A_eff = A_bound / np.maximum(density, 1e-12)
-        A_eff_n = np.power(A_eff, n_hill)
-        K_D_n = K_D ** n_hill
+        A_eff_n = np.power(A_eff, params['n_hill'])
+        K_D_n = params['K_D'] ** params['n_hill']
         hill = A_eff_n / (K_D_n + A_eff_n + 1e-12)
-        lambda_matrix = lambda_max * hill
+        lambda_matrix = params['lambda_max'] * hill
 
-    elif model_type_int == 1: # Linear
-        A0_n = np.power(A0, n_hill)
-        K_A0_n = K_A0 ** n_hill
+    elif model == "Linear Lysis Rate":
+        A0_n = np.power(params['A0'], params['n_hill'])
+        K_A0_n = params['K_A0'] ** params['n_hill']
         term_A0 = A0_n / (K_A0_n + A0_n + 1e-12)
-        lambda_matrix = a * term_A0 * mu_mat + b
+        lambda_matrix = params['a'] * term_A0 * mu_mat + params['b']
 
-    elif model_type_int == 2: # Combined
+    elif model == "Combined Model":
         A_eff = A_bound / np.maximum(density, 1e-12)
-        A_eff_n = np.power(A_eff, n_hill)
-        K_D_n = K_D ** n_hill
+        A_eff_n = np.power(A_eff, params['n_hill'])
+        K_D_n = params['K_D'] ** params['n_hill']
         hill = A_eff_n / (K_D_n + A_eff_n + 1e-12)
-        lambda_matrix = a * hill * mu_mat + b
+        lambda_matrix = params['a'] * hill * mu_mat + params['b']
         
     return lambda_matrix
 
-@njit(cache=True)
-def calculate_derived_metrics(sol_reshaped, vols, model_type_int, mu_max, Ks):
-    # Optimized function to return multiple derived matrices in one pass
-    if model_type_int == 1: # Linear
-        B_live = sol_reshaped[:, :, 0]
-        S = sol_reshaped[:, :, 2]
-        A_bound = np.zeros_like(B_live)
-    else:
-        A_bound = sol_reshaped[:, :, 1]
-        B_live = sol_reshaped[:, :, 2]
-        S = sol_reshaped[:, :, 4]
-
+def calculate_batch_a_eff(sol_reshaped, vols, params, N_batch):
+    """Reconstructs the Effective Antibiotic Concentration (A_eff) history."""
+    model = params['model']
+    n_steps = sol_reshaped.shape[0]
+    
+    if model == "Linear Lysis Rate":
+        # For simple model, "Effective Conc" is just A0
+        return np.full((n_steps, N_batch), params['A0'])
+        
+    # For models with A_bound
+    A_bound = sol_reshaped[:, :, 1]
+    B_live = sol_reshaped[:, :, 2]
+    
     density = B_live / vols
     
-    # A_eff calculation
-    if model_type_int == 1:
-        # Placeholder or A0, but for plotting we handled A0 differently in Python
-        # Let's return zeros, handled in plotting
-        A_eff = np.zeros_like(density) 
-    else:
-        A_eff = A_bound / np.maximum(density, 1e-12)
-
-    mu_mat = mu_max * S / (Ks + S)
+    # A_eff = A_bound / density
+    A_eff = A_bound / np.maximum(density, 1e-12)
     
-    return A_eff, mu_mat, density, A_bound, B_live
-
-@njit(cache=True)
-def fast_accumulate_bins(bin_sums, a_eff_bin_sums, density_bin_sums, 
-                         a_bound_bin_sums, net_rate_bin_sums, bin_counts,
-                         bin_edges, vols, 
-                         batch_blive_T, batch_a_eff_T, batch_density_T, 
-                         batch_abound_T, batch_net_rate):
-    """
-    Replaces the slow "for bin: mask..." loop with a single pass over droplets.
-    O(N_droplets) instead of O(N_droplets * N_bins).
-    """
-    n_droplets = len(vols)
-    n_bins = len(bin_edges) - 1
-    
-    # Use digitize-like logic or manual check if bins are log-uniform
-    # Assuming bin_edges are sorted.
-    
-    for i in range(n_droplets):
-        vol = vols[i]
-        
-        # Find which bin this droplet belongs to
-        # Since bins are small (30-50), a simple linear scan or digitize is fast enough
-        # compared to memory alloc of masks.
-        bin_idx = -1
-        for b in range(n_bins):
-            if vol >= bin_edges[b] and vol < bin_edges[b+1]:
-                bin_idx = b
-                break
-        
-        if bin_idx != -1:
-            # Accumulate columns (Time steps)
-            # Numba handles this loop unrolling efficiently
-            bin_sums[bin_idx, :] += batch_blive_T[i, :]
-            a_eff_bin_sums[bin_idx, :] += batch_a_eff_T[i, :]
-            density_bin_sums[bin_idx, :] += batch_density_T[i, :]
-            a_bound_bin_sums[bin_idx, :] += batch_abound_T[i, :]
-            net_rate_bin_sums[bin_idx, :] += batch_net_rate[i, :]
-            bin_counts[bin_idx] += 1
+    return A_eff
 
 def run_simulation(vols, initial_biomass, total_vols_range, params):
-    BATCH_SIZE = 2000 # Can likely increase this now that aggregation is faster
+    BATCH_SIZE = 2000
     t_eval = np.arange(params['t_start'], params['t_end'] + params['dt']/100.0, params['dt'])
     
     if len(t_eval) < 2:
@@ -400,20 +341,16 @@ def run_simulation(vols, initial_biomass, total_vols_range, params):
     final_counts_all = np.zeros(N_occupied)
 
     model = params['model']
-    
-    # Map model string to int for Numba
-    if model == "Effective Concentration":
-        model_int = 0
-        idx_Blive, idx_S, num_vars = 2, 4, 5
-        func = vec_effective_concentration
-    elif model == "Linear Lysis Rate":
-        model_int = 1
-        idx_Blive, idx_S, num_vars = 0, 2, 3
+    if model == "Linear Lysis Rate":
+        idx_Blive = 0
+        idx_S = 2
+        num_vars = 3
         func = vec_linear_lysis
-    else: # Combined
-        model_int = 2
-        idx_Blive, idx_S, num_vars = 2, 4, 5
-        func = vec_combined_model
+    else:
+        idx_Blive = 2
+        idx_S = 4
+        num_vars = 5
+        func = vec_effective_concentration if model == "Effective Concentration" else vec_combined_model
 
     progress_bar = st.progress(0)
     status_text = st.empty()
@@ -433,12 +370,11 @@ def run_simulation(vols, initial_biomass, total_vols_range, params):
         args = ()
         y0_flat = None
         
-        # Prepare Initial Conditions (Vectorized)
         if model == "Effective Concentration":
             y0_mat = np.zeros((current_batch_size, 5))
-            y0_mat[:, 0] = params['A0']      
+            y0_mat[:, 0] = params['A0']     
             y0_mat[:, 2] = batch_biomass  
-            y0_mat[:, 4] = params['S0']      
+            y0_mat[:, 4] = params['S0']     
             y0_flat = y0_mat.flatten()
             args = (current_batch_size, batch_vols, params['mu_max'], params['Ks'], params['Y'], 
                     params['K_on'], params['K_off'], params['lambda_max'], params['K_D'], params['n_hill'])
@@ -446,7 +382,7 @@ def run_simulation(vols, initial_biomass, total_vols_range, params):
         elif model == "Linear Lysis Rate":
             y0_mat = np.zeros((current_batch_size, 3))
             y0_mat[:, 0] = batch_biomass 
-            y0_mat[:, 2] = params['S0']      
+            y0_mat[:, 2] = params['S0']     
             y0_flat = y0_mat.flatten()
             A0_vec = np.full(current_batch_size, params['A0'])
             args = (current_batch_size, batch_vols, A0_vec, params['mu_max'], params['Ks'], params['Y'], 
@@ -462,39 +398,37 @@ def run_simulation(vols, initial_biomass, total_vols_range, params):
                     params['K_on'], params['K_off'], params['K_D'], params['n_hill'], params['a'], params['b'])
 
         try:
-            # ODEINT CALL
-            # Note: We are passing the Numba JIT function 'func' directly. 
-            # Scipy interfaces with it via C-API which is faster than pure Python.
             sol = odeint(func, y0_flat, t_eval, args=args)
             sol_reshaped = sol.reshape(N_STEPS, current_batch_size, num_vars)
             
-            # --- CALCULATE INTERMEDIATES (OPTIMIZED) ---
-            # 1. Lambda Matrix
-            batch_lambda_vals = calculate_batch_lambda(
-                sol_reshaped, t_eval, batch_vols, model_int,
-                params['mu_max'], params['Ks'], params['K_D'], params['n_hill'],
-                params.get('lambda_max', 0), params['A0'], params.get('K_A0', 0), 
-                params.get('a', 0), params.get('b', 0)
-            )
+            # --- CALCULATE INTERMEDIATES ---
+            batch_lambda_vals = calculate_batch_lambda(sol_reshaped, t_eval, batch_vols, params, current_batch_size)
             batch_lambda_T = batch_lambda_vals.T
             
-            # 2. Derived Metrics (A_eff, Mu, Density, A_bound, B_live)
-            (batch_a_eff, batch_mu, batch_density, 
-             batch_abound, batch_blive_cont) = calculate_derived_metrics(
-                sol_reshaped, batch_vols, model_int, params['mu_max'], params['Ks']
-            )
+            # A_eff
+            batch_a_eff_vals = calculate_batch_a_eff(sol_reshaped, batch_vols, params, current_batch_size)
+            batch_a_eff_T = batch_a_eff_vals.T
 
-            # Transpose for plotting/accumulation consistency (Droplets x Time)
-            batch_a_eff_T = batch_a_eff.T
-            batch_density_T = batch_density.T
+            # Continuous Biomass and Substrate
+            batch_blive_cont = sol_reshaped[:, :, idx_Blive]
+            batch_S = sol_reshaped[:, :, idx_S]
+
+            # --- NEW CALCULATIONS ---
+            # 1. Growth Rate (mu)
+            batch_mu = params['mu_max'] * batch_S / (params['Ks'] + batch_S)
             batch_mu_T = batch_mu.T
-            batch_abound_T = batch_abound.T
-            
-            # If Linear model, override A_eff for display purposes (just A0)
-            if model == "Linear Lysis Rate":
-                batch_a_eff_T[:] = params['A0']
 
-            # Net Rate
+            # 2. Density (Biomass / Volume)
+            batch_density = batch_blive_cont / batch_vols
+            batch_density_T = batch_density.T
+
+            # 3. Bound Antibiotic (if applicable)
+            if model == "Linear Lysis Rate":
+                batch_abound_T = np.zeros_like(batch_density_T)
+            else:
+                batch_abound_T = sol_reshaped[:, :, 1].T # Index 1 is A_bound
+
+            # *** 4. NET RATE (mu - lambda) ***
             batch_net_rate = batch_mu_T - batch_lambda_T
 
             # --- DISCRETIZATION STEP (CAMERA) ---
@@ -506,18 +440,27 @@ def run_simulation(vols, initial_biomass, total_vols_range, params):
             
             batch_blive_T = batch_blive.T
             
-            # --- FAST BINNING (REPLACED LOOP) ---
-            fast_accumulate_bins(
-                bin_sums, a_eff_bin_sums, density_bin_sums, 
-                a_bound_bin_sums, net_rate_bin_sums, bin_counts,
-                bin_edges, batch_vols, 
-                batch_blive_T, batch_a_eff_T, batch_density_T, 
-                batch_abound_T, batch_net_rate
-            )
+            # Binning
+            for b_idx in range(n_bins):
+                low, high = bin_edges[b_idx], bin_edges[b_idx + 1]
+                mask = (batch_vols >= low) & (batch_vols < high)
+                count_in_bin = np.sum(mask)
+                
+                if count_in_bin > 0:
+                    bin_sums[b_idx, :] += np.sum(batch_blive_T[mask, :], axis=0)
+                    a_eff_bin_sums[b_idx, :] += np.sum(batch_a_eff_T[mask, :], axis=0)
+                    
+                    # New Accumulators
+                    density_bin_sums[b_idx, :] += np.sum(batch_density_T[mask, :], axis=0)
+                    a_bound_bin_sums[b_idx, :] += np.sum(batch_abound_T[mask, :], axis=0)
+                    
+                    # Net Rate Accumulator
+                    net_rate_bin_sums[b_idx, :] += np.sum(batch_net_rate[mask, :], axis=0)
+                    
+                    bin_counts[b_idx] += count_in_bin
 
         except Exception as e:
             st.error(f"Error in batch {i_batch}: {e}")
-            raise e
         
         progress_bar.progress((i_batch + 1) / n_batches)
 
@@ -904,7 +847,7 @@ def convert_df(df):
     return df.to_csv(index=False).encode('utf-8')
 
 # ==========================================
-# 6. MAIN EXECUTION
+# 6. MAIN EXECUTION (Refactored for Single Figure Display)
 # ==========================================
 
 def main():
@@ -918,7 +861,7 @@ def main():
     
     check_debounce()
     
-    # --- Generate Data (Calls Numba Wrapper) ---
+    # --- Generate Data ---
     vols, counts, initial_biomass, total_vols = generate_population(
         params['mean_log10'], params['std_log10'], params['n_samples'], 
         params['concentration'], MEAN_PIXELS, STD_PIXELS
@@ -942,6 +885,7 @@ def main():
     df_density, vc_val = calculate_vc_and_density(vols, initial_biomass, params['concentration'], MEAN_PIXELS)
     
     # --- Run Simulation ---
+    # Updated unpack to include net_rate_bin_sums and removed mu/lambda sums
     (bin_sums, bin_counts, final_biomass, t_eval, bin_edges, 
      a_eff_bin_sums, density_bin_sums, a_bound_bin_sums, net_rate_bin_sums) = run_simulation(
         vols, initial_biomass, (total_vols.min(), total_vols.max()), params
@@ -950,30 +894,35 @@ def main():
     st.divider()
     
     # ==========================================
-    # UI LAYOUT: SELECTOR
+    # NEW UI LAYOUT: SELECTOR INSTEAD OF TABS
     # ==========================================
     
     st.subheader("Results Analysis")
 
+    # The list of available figures
     plot_options = [
         "Population Dynamics", 
         "Droplet Distribution", 
         "Initial Density & Vc", 
         "Fold Change", 
         "N0 vs Volume",
-        "Net Growth Rate (μ - λ)", 
+        "Net Growth Rate (μ - λ)", # Merged Figure
         "Antibiotic Dynamics",
         "Density Dynamics",
         "Bound Antibiotic"
     ]
 
+    # The Selector - Acts as the "Tab Switcher"
     selected_plot = st.selectbox("Select Figure to Display:", plot_options)
 
+    # Container for the single figure
     with st.container():
         
+        # --- 1. Population Dynamics ---
         if selected_plot == "Population Dynamics":
             st.markdown("#### Mean Growth curves (Normalized Biomass)")
             
+            # Prepare Data
             data_dyn = {'Time': t_eval}
             for i in range(len(bin_counts)):
                 if bin_counts[i] > 0:
@@ -996,6 +945,7 @@ def main():
             p = plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges)
             streamlit_bokeh(p, use_container_width=True)
 
+        # --- 2. Droplet Distribution ---
         elif selected_plot == "Droplet Distribution":
             st.markdown("#### Droplet Distribution: Total vs Occupied")
             
@@ -1010,6 +960,7 @@ def main():
             p = plot_distribution(total_vols, vols)
             streamlit_bokeh(p, use_container_width=True)
 
+        # --- 3. Initial Density & Vc ---
         elif selected_plot == "Initial Density & Vc":
             st.markdown("#### Initial Density & Vc Calculation")
             st.download_button("Download CSV", data=convert_df(df_density), 
@@ -1018,6 +969,7 @@ def main():
             p = plot_initial_density_vc(df_density, vc_val, params['concentration'])
             streamlit_bokeh(p, use_container_width=True)
 
+        # --- 4. Fold Change ---
         elif selected_plot == "Fold Change":
             st.markdown("#### Biomass Fold Change vs Volume")
             p, df_fc = plot_fold_change(vols, initial_biomass, final_biomass, vc_val)
@@ -1026,6 +978,7 @@ def main():
                                file_name="fold_change_data.csv", mime="text/csv")
             streamlit_bokeh(p, use_container_width=True)
 
+        # --- 5. N0 vs Volume ---
         elif selected_plot == "N0 vs Volume":
             st.markdown(f"#### Initial Biomass (N0) vs Volume")
             st.info(f"Regression is calculated for Volumes ≥ Vc ({vc_val:.1f} μm³)")
@@ -1035,6 +988,7 @@ def main():
             p = plot_n0_vs_volume(df_density, vc_val)
             streamlit_bokeh(p, use_container_width=True)
 
+        # --- 6. NET GROWTH RATE (Merged Figure) ---
         elif selected_plot == "Net Growth Rate (μ - λ)":
             st.markdown("#### Net Growth Rate ($\mu - \lambda_D$)")
             st.info("This plot shows the effective growth rate. Positive values mean net growth, negative values mean net death (lysis > growth).")
@@ -1042,18 +996,21 @@ def main():
             p_net = plot_net_growth_dynamics(t_eval, net_rate_bin_sums, bin_counts, bin_edges)
             streamlit_bokeh(p_net, use_container_width=True)
 
+        # --- 7. Antibiotic Dynamics ---
         elif selected_plot == "Antibiotic Dynamics":
             st.markdown("#### Effective Antibiotic Concentration ($A_{bound} / \\rho$)")
             st.info("This metric normalizes bound antibiotic by cell density.")
             p_aeff = plot_a_eff_dynamics(t_eval, a_eff_bin_sums, bin_counts, bin_edges, params)
             streamlit_bokeh(p_aeff, use_container_width=True)
 
+        # --- 8. Density Dynamics ---
         elif selected_plot == "Density Dynamics":
             st.markdown("#### Cell Density Dynamics ($B/V$)")
             st.info("Log-scale plot. Shows how biomass density changes over time for each bin.")
             p_dens = plot_density_dynamics(t_eval, density_bin_sums, bin_counts, bin_edges)
             streamlit_bokeh(p_dens, use_container_width=True)
 
+        # --- 9. Bound Antibiotic ---
         elif selected_plot == "Bound Antibiotic":
             st.markdown("#### Bound Antibiotic ($A_{bound}$)")
             st.info("Shows the absolute amount of antibiotic bound to cells in a droplet.")
