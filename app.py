@@ -13,8 +13,7 @@ from bokeh.layouts import column
 from bokeh.models import Div
 
 # --- NUMBA IMPORTS ---
-from numba import njit, prange
-
+from numba import njit
 
 # ==========================================
 # 1. PAGE CONFIG & STATE MANAGEMENT
@@ -24,20 +23,17 @@ def configure_page():
     st.set_page_config(page_title="Growth - Lysis Model simulation", layout="wide")
     st.title("Growth - Lysis Model simulation")
 
-
 def init_session_state():
     if "last_change_time" not in st.session_state:
         st.session_state.last_change_time = time.time()
 
-
 def input_changed():
     st.session_state.last_change_time = time.time()
 
-
 def check_debounce(delay=0.7):
+    # Simple debounce to prevent simulation from running while dragging sliders rapidly
     while time.time() - st.session_state.last_change_time < delay:
         time.sleep(0.1)
-
 
 # ==========================================
 # 2. ODE MATH MODELS (OPTIMIZED)
@@ -169,7 +165,7 @@ def render_sidebar():
 
         defaults = ['K_on', 'K_off', 'K_D', 'n_hill', 'lambda_max', 'a', 'b', 'K_A0']
         for key in defaults:
-            params[key] = 0
+            params[key] = 0.0
 
         if params['model'] in ["Effective Concentration", "Combined Model"]:
             params['K_on'] = st.number_input("K_on", value=750.0, on_change=input_changed)
@@ -192,7 +188,7 @@ def render_sidebar():
 
 
 # ==========================================
-# 4. CORE LOGIC & CALCULATION FUNCTIONS (OPTIMIZED)
+# 4. CORE LOGIC & CALCULATION FUNCTIONS (OPTIMIZED & CACHED)
 # ==========================================
 
 @njit(cache=True)
@@ -216,13 +212,11 @@ def _generate_population_fast(n, mean, std, conc, mean_pix, std_pix):
     final_vols = trimmed_vol[occupied_mask].copy()
     final_counts = cell_counts[occupied_mask].copy()
 
-    n_occupied = len(final_counts)
-
     # 3. Biomass Conversion with Noise
     base_biomass = final_counts * mean_pix
 
     # Add noise
-    noise_base = np.random.normal(0.0, 1.0, n_occupied)
+    noise_base = np.random.normal(0.0, 1.0, len(final_counts))
     noise_scale = np.sqrt(final_counts) * std_pix
     noise = noise_base * noise_scale
 
@@ -232,12 +226,14 @@ def _generate_population_fast(n, mean, std, conc, mean_pix, std_pix):
 
     return final_vols, final_counts, final_biomass, trimmed_vol
 
-
-@st.cache_data
+# Cached Population Generation
+@st.cache_data(show_spinner=False)
 def generate_population(mean, std, n, conc, mean_pix, std_pix):
     return _generate_population_fast(n, mean, std, conc, mean_pix, std_pix)
 
 
+# Cached VC Calculation
+@st.cache_data(show_spinner=False)
 def calculate_vc_and_density(vols, biomass, theoretical_conc, mean_pix):
     effective_count = biomass / mean_pix
 
@@ -275,7 +271,6 @@ def calculate_batch_lambda(sol_reshaped, t_eval, vols, model_type_int,
     if model_type_int == 1:  # Linear
         B_live = sol_reshaped[:, :, 0]
         S = sol_reshaped[:, :, 2]
-        A_bound = np.zeros_like(B_live)  # Placeholder
     else:  # Eff Conc or Combined
         A_bound = sol_reshaped[:, :, 1]
         B_live = sol_reshaped[:, :, 2]
@@ -310,7 +305,6 @@ def calculate_batch_lambda(sol_reshaped, t_eval, vols, model_type_int,
 
 @njit(cache=True)
 def calculate_derived_metrics(sol_reshaped, vols, model_type_int, mu_max, Ks):
-    # UPDATED: Now extracts 'S' as well
     if model_type_int == 1:  # Linear
         B_live = sol_reshaped[:, :, 0]
         S = sol_reshaped[:, :, 2]
@@ -329,16 +323,15 @@ def calculate_derived_metrics(sol_reshaped, vols, model_type_int, mu_max, Ks):
 
     mu_mat = mu_max * S / (Ks + S)
 
-    # Return S too
     return A_eff, mu_mat, density, A_bound, B_live, S
 
 
 @njit(cache=True)
 def fast_accumulate_bins(bin_sums, a_eff_bin_sums, density_bin_sums,
-                         a_bound_bin_sums, net_rate_bin_sums, s_bin_sums,  # ADDED s_bin_sums
+                         a_bound_bin_sums, net_rate_bin_sums, s_bin_sums,
                          bin_counts, bin_edges, vols,
                          batch_blive_T, batch_a_eff_T, batch_density_T,
-                         batch_abound_T, batch_net_rate, batch_S_T):  # ADDED batch_S_T
+                         batch_abound_T, batch_net_rate, batch_S_T):
     n_droplets = len(vols)
     n_bins = len(bin_edges) - 1
 
@@ -356,11 +349,15 @@ def fast_accumulate_bins(bin_sums, a_eff_bin_sums, density_bin_sums,
             density_bin_sums[bin_idx, :] += batch_density_T[i, :]
             a_bound_bin_sums[bin_idx, :] += batch_abound_T[i, :]
             net_rate_bin_sums[bin_idx, :] += batch_net_rate[i, :]
-            s_bin_sums[bin_idx, :] += batch_S_T[i, :]  # Accumulate S
+            s_bin_sums[bin_idx, :] += batch_S_T[i, :]
             bin_counts[bin_idx] += 1
 
-
-def run_simulation(vols, initial_biomass, total_vols_range, params):
+# ==============================================================================
+# CACHED SIMULATION CORE
+# (Progress bars removed to allow caching of the heavy calculation result)
+# ==============================================================================
+@st.cache_data(show_spinner="Running Simulation... (Cached)")
+def _compute_simulation_core(vols, initial_biomass, total_vols_range, params):
     BATCH_SIZE = 2000
     t_eval = np.arange(params['t_start'], params['t_end'] + params['dt'] / 100.0, params['dt'])
 
@@ -381,7 +378,7 @@ def run_simulation(vols, initial_biomass, total_vols_range, params):
     density_bin_sums = np.zeros((n_bins, N_STEPS))
     a_bound_bin_sums = np.zeros((n_bins, N_STEPS))
     net_rate_bin_sums = np.zeros((n_bins, N_STEPS))
-    s_bin_sums = np.zeros((n_bins, N_STEPS))  # ADDED Substrate Accumulator
+    s_bin_sums = np.zeros((n_bins, N_STEPS))
 
     bin_counts = np.zeros(n_bins)
     final_counts_all = np.zeros(N_occupied)
@@ -401,17 +398,12 @@ def run_simulation(vols, initial_biomass, total_vols_range, params):
         idx_Blive, idx_S, num_vars = 2, 4, 5
         func = vec_combined_model
 
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    start_time = time.time()
     n_batches = int(np.ceil(N_occupied / BATCH_SIZE))
 
     for i_batch in range(n_batches):
         start_idx = i_batch * BATCH_SIZE
         end_idx = min((i_batch + 1) * BATCH_SIZE, N_occupied)
         current_batch_size = end_idx - start_idx
-
-        status_text.text(f"Simulating Batch {i_batch + 1}/{n_batches} ({current_batch_size} droplets)...")
 
         batch_vols = vols[start_idx:end_idx]
         batch_biomass = initial_biomass[start_idx:end_idx]
@@ -446,65 +438,57 @@ def run_simulation(vols, initial_biomass, total_vols_range, params):
             args = (current_batch_size, batch_vols, params['mu_max'], params['Ks'], params['Y'],
                     params['K_on'], params['K_off'], params['K_D'], params['n_hill'], params['a'], params['b'])
 
-        try:
-            sol = odeint(func, y0_flat, t_eval, args=args, rtol=1e-3, atol=1e-3)
-            sol_reshaped = sol.reshape(N_STEPS, current_batch_size, num_vars)
+        
+        sol = odeint(func, y0_flat, t_eval, args=args, rtol=1e-3, atol=1e-6)
+        sol_reshaped = sol.reshape(N_STEPS, current_batch_size, num_vars)
 
-            batch_lambda_vals = calculate_batch_lambda(
-                sol_reshaped, t_eval, batch_vols, model_int,
-                params['mu_max'], params['Ks'], params['K_D'], params['n_hill'],
-                params.get('lambda_max', 0), params['A0'], params.get('K_A0', 0),
-                params.get('a', 0), params.get('b', 0)
-            )
-            batch_lambda_T = batch_lambda_vals.T
+        batch_lambda_vals = calculate_batch_lambda(
+            sol_reshaped, t_eval, batch_vols, model_int,
+            params['mu_max'], params['Ks'], params['K_D'], params['n_hill'],
+            params.get('lambda_max', 0), params['A0'], params.get('K_A0', 0),
+            params.get('a', 0), params.get('b', 0)
+        )
+        batch_lambda_T = batch_lambda_vals.T
 
-            # UPDATED: Unpack S here
-            (batch_a_eff, batch_mu, batch_density,
-             batch_abound, batch_blive_cont, batch_S) = calculate_derived_metrics(
-                sol_reshaped, batch_vols, model_int, params['mu_max'], params['Ks']
-            )
+        (batch_a_eff, batch_mu, batch_density,
+            batch_abound, batch_blive_cont, batch_S) = calculate_derived_metrics(
+            sol_reshaped, batch_vols, model_int, params['mu_max'], params['Ks']
+        )
 
-            batch_a_eff_T = batch_a_eff.T
-            batch_density_T = batch_density.T
-            batch_mu_T = batch_mu.T
-            batch_abound_T = batch_abound.T
-            batch_S_T = batch_S.T  # ADDED Transpose S
+        batch_a_eff_T = batch_a_eff.T
+        batch_density_T = batch_density.T
+        batch_mu_T = batch_mu.T
+        batch_abound_T = batch_abound.T
+        batch_S_T = batch_S.T
 
-            if model == "Linear Lysis Rate":
-                batch_a_eff_T[:] = params['A0']
+        if model == "Linear Lysis Rate":
+            batch_a_eff_T[:] = params['A0']
 
-            batch_net_rate = batch_mu_T - batch_lambda_T
+        batch_net_rate = batch_mu_T - batch_lambda_T
 
-            batch_blive = np.round(batch_blive_cont)
+        batch_blive = np.round(batch_blive_cont)
 
-            final_c = np.mean(batch_blive[-2:, :], axis=0) if N_STEPS > 2 else batch_blive[-1, :]
-            final_c = np.where(final_c < 2.0, 0.0, final_c)
-            final_counts_all[start_idx:end_idx] = final_c
+        final_c = np.mean(batch_blive[-2:, :], axis=0) if N_STEPS > 2 else batch_blive[-1, :]
+        final_c = np.where(final_c < 2.0, 0.0, final_c)
+        final_counts_all[start_idx:end_idx] = final_c
 
-            batch_blive_T = batch_blive.T
+        batch_blive_T = batch_blive.T
 
-            # UPDATED: Pass S to accumulator
-            fast_accumulate_bins(
-                bin_sums, a_eff_bin_sums, density_bin_sums,
-                a_bound_bin_sums, net_rate_bin_sums, s_bin_sums,
-                bin_counts, bin_edges, batch_vols,
-                batch_blive_T, batch_a_eff_T, batch_density_T,
-                batch_abound_T, batch_net_rate, batch_S_T
-            )
-
-        except Exception as e:
-            st.error(f"Error in batch {i_batch}: {e}")
-            raise e
-
-        progress_bar.progress((i_batch + 1) / n_batches)
-
-    status_text.text(f"Simulation complete in {time.time() - start_time:.2f} seconds.")
-    time.sleep(1)
-    status_text.empty()
-    progress_bar.empty()
+        fast_accumulate_bins(
+            bin_sums, a_eff_bin_sums, density_bin_sums,
+            a_bound_bin_sums, net_rate_bin_sums, s_bin_sums,
+            bin_counts, bin_edges, batch_vols,
+            batch_blive_T, batch_a_eff_T, batch_density_T,
+            batch_abound_T, batch_net_rate, batch_S_T
+        )
 
     return (bin_sums, bin_counts, final_counts_all, t_eval, bin_edges,
             a_eff_bin_sums, density_bin_sums, a_bound_bin_sums, net_rate_bin_sums, s_bin_sums)
+
+
+def run_simulation(vols, initial_biomass, total_vols_range, params):
+    # Wrapper function for the cached core logic
+    return _compute_simulation_core(vols, initial_biomass, total_vols_range, params)
 
 
 # ==========================================
@@ -688,7 +672,6 @@ def plot_density_dynamics(t_eval, density_bin_sums, bin_counts, bin_edges):
     return p
 
 
-# *** NEW PLOTTING FUNCTION FOR SUBSTRATE ***
 def plot_substrate_dynamics(t_eval, s_bin_sums, bin_counts, bin_edges):
     p = figure(x_axis_label="Time (h)", y_axis_label="Substrate Concentration (S)",
                height=800, width=1200, tools="pan,wheel_zoom,reset,save",
@@ -704,7 +687,6 @@ def plot_substrate_dynamics(t_eval, s_bin_sums, bin_counts, bin_edges):
     for i in range(len(bin_counts)):
         if bin_counts[i] > 0:
             mean_vals = s_bin_sums[i, :] / bin_counts[i]
-            # No log scale for Substrate as it goes to 0
 
             low_exp = int(np.log10(bin_edges[i]))
             high_exp = int(np.log10(bin_edges[i + 1]))
@@ -934,7 +916,7 @@ def main():
 
     check_debounce()
 
-    # --- Generate Data (Calls Numba Wrapper) ---
+    # --- Generate Data (Calls Numba Wrapper - CACHED) ---
     vols, counts, initial_biomass, total_vols = generate_population(
         params['mean_log10'], params['std_log10'], params['n_samples'],
         params['concentration'], MEAN_PIXELS, STD_PIXELS
@@ -964,10 +946,10 @@ def main():
         st.error("No occupied droplets found. Try increasing Concentration or Mean Volume.")
         st.stop()
 
+    # --- Calculate Derived (CACHED) ---
     df_density, vc_val = calculate_vc_and_density(vols, initial_biomass, params['concentration'], MEAN_PIXELS)
 
-    # --- Run Simulation ---
-    # UPDATED UNPACKING: Added s_bin_sums
+    # --- Run Simulation (CACHED CORE) ---
     (bin_sums, bin_counts, final_biomass, t_eval, bin_edges,
      a_eff_bin_sums, density_bin_sums, a_bound_bin_sums, net_rate_bin_sums, s_bin_sums) = run_simulation(
         vols, initial_biomass, (total_vols.min(), total_vols.max()), params
@@ -988,7 +970,7 @@ def main():
         "Fold Change",
         "N0 vs Volume",
         "Net Growth Rate (μ - λ)",
-        "Substrate Dynamics",  # ADDED
+        "Substrate Dynamics",
         "Antibiotic Dynamics",
         "Density Dynamics",
         "Bound Antibiotic"
@@ -1071,7 +1053,7 @@ def main():
             p_net = plot_net_growth_dynamics(t_eval, net_rate_bin_sums, bin_counts, bin_edges)
             streamlit_bokeh(p_net, use_container_width=True)
 
-        elif selected_plot == "Substrate Dynamics":  # ADDED
+        elif selected_plot == "Substrate Dynamics":
             st.markdown("#### Substrate Concentration (S)")
             st.info("Shows depletion of food/resources over time for each volume bin.")
             p_s = plot_substrate_dynamics(t_eval, s_bin_sums, bin_counts, bin_edges)
@@ -1101,4 +1083,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
