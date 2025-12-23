@@ -230,7 +230,16 @@ def _generate_population_fast(n, mean, std, conc, mean_pix, std_pix):
 @st.cache_data
 def generate_population(mean, std, n, conc, mean_pix, std_pix):
     # Wrapper to call the JIT function from Streamlit
-    return _generate_population_fast(n, mean, std, conc, mean_pix, std_pix)
+    # FIX: Explicitly cast inputs to native Python types (int/float)
+    # This prevents Numba from choking on Streamlit's numpy scalars or float inputs
+    return _generate_population_fast(
+        int(n), 
+        float(mean), 
+        float(std), 
+        float(conc), 
+        float(mean_pix), 
+        float(std_pix)
+    )
 
 
 def calculate_vc_and_density(vols, biomass, theoretical_conc, mean_pix):
@@ -1065,3 +1074,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
