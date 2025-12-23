@@ -447,8 +447,7 @@ def run_simulation(vols, initial_biomass, total_vols_range, params):
                     params['K_on'], params['K_off'], params['K_D'], params['n_hill'], params['a'], params['b'])
 
         try:
-            sol = odeint(func, y0_flat, t_eval, args=args, rtol=1e-3, atol=1e-6)
-
+            sol = odeint(func, y0_flat, t_eval, args=args, rtol=1e-3, atol=1e-3)
             sol_reshaped = sol.reshape(N_STEPS, current_batch_size, num_vars)
 
             batch_lambda_vals = calculate_batch_lambda(
@@ -1102,3 +1101,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
