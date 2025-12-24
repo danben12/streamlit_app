@@ -47,10 +47,6 @@ def vec_effective_concentration(y_flat, t, N, V, mu_max, Ks, Y, K_on, K_off, lam
     B_live = y[:, 2]
     S = y[:, 4]
     
-    # Pre-allocate output to avoid memory overhead
-    # In pure numpy we stacked, here we can fill directly or stack. 
-    # Stacking is fine in modern Numba.
-    
     density = B_live / V
     # Prevent division by zero with maximum
     A_eff = A_bound / np.maximum(density, 1e-12) 
@@ -196,7 +192,9 @@ def render_sidebar():
 @njit(cache=True)
 def _generate_population_fast(n, mean, std, conc, mean_pix, std_pix):
     # 1. Droplet Volumes
-    log_data = np.random.normal(mean, std, int(n))
+    # Ensure n is integer for Numba
+    n_int = int(n)
+    log_data = np.random.normal(mean, std, n_int)
     volume_data = 10 ** log_data
     
     # Use boolean indexing (supported in Numba)
@@ -205,7 +203,13 @@ def _generate_population_fast(n, mean, std, conc, mean_pix, std_pix):
     
     # 2. Poisson loading (Cell Counts)
     lambdas = trimmed_vol * conc
-    cell_counts = np.random.poisson(lambdas)
+    
+    # --- FIX START: Explicit loop for Poisson in Numba ---
+    n_lambdas = len(lambdas)
+    cell_counts = np.zeros(n_lambdas, dtype=np.int64)
+    for i in range(n_lambdas):
+        cell_counts[i] = np.random.poisson(lambdas[i])
+    # --- FIX END ---
     
     # Filter occupied
     occupied_mask = cell_counts > 0
@@ -436,9 +440,9 @@ def run_simulation(vols, initial_biomass, total_vols_range, params):
         # Prepare Initial Conditions (Vectorized)
         if model == "Effective Concentration":
             y0_mat = np.zeros((current_batch_size, 5))
-            y0_mat[:, 0] = params['A0']      
+            y0_mat[:, 0] = params['A0']       
             y0_mat[:, 2] = batch_biomass  
-            y0_mat[:, 4] = params['S0']      
+            y0_mat[:, 4] = params['S0']       
             y0_flat = y0_mat.flatten()
             args = (current_batch_size, batch_vols, params['mu_max'], params['Ks'], params['Y'], 
                     params['K_on'], params['K_off'], params['lambda_max'], params['K_D'], params['n_hill'])
@@ -446,7 +450,7 @@ def run_simulation(vols, initial_biomass, total_vols_range, params):
         elif model == "Linear Lysis Rate":
             y0_mat = np.zeros((current_batch_size, 3))
             y0_mat[:, 0] = batch_biomass 
-            y0_mat[:, 2] = params['S0']      
+            y0_mat[:, 2] = params['S0']       
             y0_flat = y0_mat.flatten()
             A0_vec = np.full(current_batch_size, params['A0'])
             args = (current_batch_size, batch_vols, A0_vec, params['mu_max'], params['Ks'], params['Y'], 
