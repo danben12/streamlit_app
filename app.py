@@ -224,12 +224,14 @@ def _generate_population_fast(n, mean, std, conc, mean_pix, std_pix):
 
     return final_vols, final_counts, final_biomass, trimmed_vol
 
+# [ADDED CACHING HERE]
+@st.cache_data(show_spinner="Generating population...")
 def generate_population(mean, std, n, conc, mean_pix, std_pix):
     return _generate_population_fast(n, mean, std, conc, mean_pix, std_pix)
 
 
 def calculate_vc_and_density(vols, biomass, theoretical_conc, mean_pix):
-    # --- [FIX 1] Added Guard Clause for Empty Data ---
+    # Guard Clause for Empty Data
     if len(vols) == 0:
         return pd.DataFrame(), 0.0
     
@@ -401,10 +403,17 @@ def _compute_simulation_core(vols, initial_biomass, total_vols_range, params):
 
     n_batches = int(np.ceil(N_occupied / BATCH_SIZE))
 
+    # [ADDED LOADING BAR]
+    progress_bar = st.progress(0, text="Initializing simulation...")
+
     for i_batch in range(n_batches):
         start_idx = i_batch * BATCH_SIZE
         end_idx = min((i_batch + 1) * BATCH_SIZE, N_occupied)
         current_batch_size = end_idx - start_idx
+
+        # Update progress
+        progress_val = min((i_batch) / n_batches, 1.0)
+        progress_bar.progress(progress_val, text=f"Simulating Batch {i_batch+1}/{n_batches}...")
 
         batch_vols = vols[start_idx:end_idx]
         batch_biomass = initial_biomass[start_idx:end_idx]
@@ -482,6 +491,9 @@ def _compute_simulation_core(vols, initial_biomass, total_vols_range, params):
             batch_blive_T, batch_a_eff_T, batch_density_T,
             batch_abound_T, batch_net_rate, batch_S_T
         )
+    
+    # [CLEANUP LOADING BAR]
+    progress_bar.empty()
 
     return (bin_sums, bin_counts, final_counts_all, t_eval, bin_edges,
             a_eff_bin_sums, density_bin_sums, a_bound_bin_sums, net_rate_bin_sums, s_bin_sums)
@@ -939,7 +951,7 @@ def main():
         n_trimmed = len(total_vols)
         N_occupied = len(vols)
         
-        # --- [FIX 2] MOVED CALCULATIONS INSIDE THE CHECK ---
+        # MOVED CALCULATIONS INSIDE THE CHECK
         # Only run if there are occupied droplets
         if N_occupied > 0:
             # --- Calculate Derived ---
