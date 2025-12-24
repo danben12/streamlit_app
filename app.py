@@ -229,6 +229,10 @@ def generate_population(mean, std, n, conc, mean_pix, std_pix):
 
 
 def calculate_vc_and_density(vols, biomass, theoretical_conc, mean_pix):
+    # --- [FIX 1] Added Guard Clause for Empty Data ---
+    if len(vols) == 0:
+        return pd.DataFrame(), 0.0
+    
     effective_count = biomass / mean_pix
 
     df = pd.DataFrame({'Volume': vols, 'Biomass': biomass, 'Count': effective_count})
@@ -326,10 +330,10 @@ def calculate_derived_metrics(sol_reshaped, vols, model_type_int, mu_max, Ks):
 # fastmath=True makes this O(N) loop very fast.
 @njit(cache=True, fastmath=True)
 def fast_accumulate_bins_serial(bin_sums, a_eff_bin_sums, density_bin_sums,
-                         a_bound_bin_sums, net_rate_bin_sums, s_bin_sums,
-                         bin_counts, bin_edges, vols,
-                         batch_blive_T, batch_a_eff_T, batch_density_T,
-                         batch_abound_T, batch_net_rate, batch_S_T):
+                          a_bound_bin_sums, net_rate_bin_sums, s_bin_sums,
+                          bin_counts, bin_edges, vols,
+                          batch_blive_T, batch_a_eff_T, batch_density_T,
+                          batch_abound_T, batch_net_rate, batch_S_T):
     n_droplets = len(vols)
     n_bins = len(bin_edges) - 1
 
@@ -935,16 +939,21 @@ def main():
         n_trimmed = len(total_vols)
         N_occupied = len(vols)
         
-        # --- Calculate Derived ---
-        df_density, vc_val = calculate_vc_and_density(vols, initial_biomass, params['concentration'], MEAN_PIXELS)
-
-        # --- Run Simulation (Heavy Lift) ---
+        # --- [FIX 2] MOVED CALCULATIONS INSIDE THE CHECK ---
+        # Only run if there are occupied droplets
         if N_occupied > 0:
+            # --- Calculate Derived ---
+            df_density, vc_val = calculate_vc_and_density(vols, initial_biomass, params['concentration'], MEAN_PIXELS)
+
+            # --- Run Simulation (Heavy Lift) ---
             sim_output = run_simulation(
                 vols, initial_biomass, (total_vols.min(), total_vols.max()), params
             )
         else:
+            # Handle empty simulation gracefully
             sim_output = None
+            df_density = pd.DataFrame()
+            vc_val = 0.0
 
         # --- Store in Session State ---
         st.session_state.sim_results = {
@@ -1067,4 +1076,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
