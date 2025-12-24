@@ -139,7 +139,7 @@ def render_sidebar():
         params['n_samples'] = st.number_input("N Samples (Droplets)", 1000, 100000, 17000, 1000)
         
         # [CHANGE: UPDATED DEFAULT TO -3.0 TO ENSURE POPULATION EXISTS]
-        params['conc_exp'] = st.slider("Concentration Exp (10^x)", -7.0, -1.0, -3.0, 0.1)
+        params['conc_exp'] = st.slider("Concentration Exp (10^x)", -7.0, -1.0, -4.3, 0.1)
         params['concentration'] = 10 ** params['conc_exp']
 
         # --- Global Params ---
@@ -1111,3 +1111,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
