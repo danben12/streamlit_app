@@ -11,7 +11,7 @@ from scipy.stats import linregress
 from bokeh.layouts import column
 from bokeh.models import Div
 
-# --- NUMBA IMPORTS (Kept for calculation speed, not caching) ---
+# --- NUMBA IMPORTS ---
 from numba import njit, prange
 
 # ==========================================
@@ -118,7 +118,7 @@ def render_sidebar():
         
         # --- Model Selection ---
         model_choices = ["Effective Concentration", "Linear Lysis Rate", "Combined Model"]
-        params['model'] = st.selectbox("Select Model", model_choices)
+        params['model'] = st.sidebar.selectbox("Select Model", model_choices)
 
         # --- Time Settings ---
         st.subheader("Time Settings")
@@ -215,7 +215,6 @@ def generate_population_numba(n, mean, std, conc, mean_pix, std_pix):
     return final_vols, final_counts, final_biomass, trimmed_vol
 
 
-# NO CACHING DECORATOR HERE
 def calculate_vc_and_density(vols, biomass, theoretical_conc, mean_pix):
     effective_count = biomass / mean_pix
 
@@ -331,7 +330,7 @@ def fast_accumulate_bins_serial(bin_sums, a_eff_bin_sums, density_bin_sums,
             s_bin_sums[bin_idx, :] += batch_S_T[i, :]
             bin_counts[bin_idx] += 1
 
-# NO CACHING DECORATOR HERE
+
 def run_simulation_core(vols, initial_biomass, total_vols_range, params):
     BATCH_SIZE = 2000
     t_eval = np.arange(params['t_start'], params['t_end'] + params['dt'] / 100.0, params['dt'])
@@ -375,7 +374,6 @@ def run_simulation_core(vols, initial_biomass, total_vols_range, params):
 
     n_batches = int(np.ceil(N_occupied / BATCH_SIZE))
     
-    # Progress bar only makes sense if not cached, so we can add it back here
     progress_bar = st.progress(0)
 
     for i_batch in range(n_batches):
@@ -902,6 +900,12 @@ def main():
             params['mean_log10'], params['std_log10'], params['n_samples'],
             params['concentration'], MEAN_PIXELS, STD_PIXELS
         )
+        
+        # --- CRITICAL ERROR CHECK ---
+        if len(vols) == 0:
+            st.error("Simulation generated ZERO valid occupied droplets. Try increasing Mean Volume or Concentration.")
+            st.stop()
+        # ----------------------------
 
         # Sort for better plotting lines
         sort_idx = np.argsort(vols)
