@@ -13,7 +13,7 @@ from bokeh.layouts import column
 from bokeh.models import Div
 
 # --- NUMBA IMPORTS ---
-from numba import njit
+from numba import njit, prange
 
 # ==========================================
 # 1. PAGE CONFIG & STATE MANAGEMENT
@@ -39,9 +39,12 @@ def check_debounce(delay=0.7):
 # 2. ODE MATH MODELS (OPTIMIZED)
 # ==========================================
 
-@njit(cache=True)
+# OPTIMIZATION: fastmath=True allows simpler CPU instructions. 
+# nogil=True allows releasing the Global Interpreter Lock for potential threading.
+@njit(cache=True, fastmath=True, nogil=True)
 def vec_effective_concentration(y_flat, t, N, V, mu_max, Ks, Y, K_on, K_off, lambda_max, K_D, n):
     y = y_flat.reshape((N, 5))
+    # Direct slicing creates views, which is fast
     A_free = y[:, 0]
     A_bound = y[:, 1]
     B_live = y[:, 2]
@@ -58,16 +61,17 @@ def vec_effective_concentration(y_flat, t, N, V, mu_max, Ks, Y, K_on, K_off, lam
 
     dB_live_dt = (mu - lambda_D) * B_live
     dB_dead_dt = lambda_D * B_live
-    dS_dt = - (1 / Y) * mu * density
+    dS_dt = - (1.0 / Y) * mu * density
 
     dA_free_dt = -K_on * A_free * density + K_off * A_bound + lambda_D * A_bound
     dA_bound_dt = K_on * A_free * density - K_off * A_bound - lambda_D * A_bound
 
+    # Stack creates a copy, but necessary for odeint return structure
     dY = np.stack((dA_free_dt, dA_bound_dt, dB_live_dt, dB_dead_dt, dS_dt), axis=1)
     return dY.flatten()
 
 
-@njit(cache=True)
+@njit(cache=True, fastmath=True, nogil=True)
 def vec_linear_lysis(y_flat, t, N, V, A0_vec, mu_max, Ks, Y, a, b, K_A0, n):
     y = y_flat.reshape((N, 3))
     B_live = y[:, 0]
@@ -84,13 +88,13 @@ def vec_linear_lysis(y_flat, t, N, V, A0_vec, mu_max, Ks, Y, a, b, K_A0, n):
 
     dB_live_dt = (mu - lambda_D) * B_live
     dB_dead_dt = lambda_D * B_live
-    dS_dt = - (1 / Y) * mu * density
+    dS_dt = - (1.0 / Y) * mu * density
 
     dY = np.stack((dB_live_dt, dB_dead_dt, dS_dt), axis=1)
     return dY.flatten()
 
 
-@njit(cache=True)
+@njit(cache=True, fastmath=True, nogil=True)
 def vec_combined_model(y_flat, t, N, V, mu_max, Ks, Y, K_on, K_off, K_D, n, a, b):
     y = y_flat.reshape((N, 5))
     A_free = y[:, 0]
@@ -110,7 +114,7 @@ def vec_combined_model(y_flat, t, N, V, mu_max, Ks, Y, K_on, K_off, K_D, n, a, b
 
     dB_live_dt = (mu - lambda_D) * B_live
     dB_dead_dt = lambda_D * B_live
-    dS_dt = - (1 / Y) * mu * density
+    dS_dt = - (1.0 / Y) * mu * density
 
     dA_free_dt = -K_on * A_free * density + K_off * A_bound + lambda_D * A_bound
     dA_bound_dt = K_on * A_free * density - K_off * A_bound - lambda_D * A_bound
@@ -191,7 +195,8 @@ def render_sidebar():
 # 4. CORE LOGIC & CALCULATION FUNCTIONS (OPTIMIZED & CACHED)
 # ==========================================
 
-@njit(cache=True)
+# OPTIMIZATION: parallel=True uses multiple CPU cores for the loop
+@njit(cache=True, parallel=True, fastmath=True)
 def _generate_population_fast(n, mean, std, conc, mean_pix, std_pix):
     # 1. Droplet Volumes
     log_data = np.random.normal(mean, std, int(n))
@@ -204,7 +209,8 @@ def _generate_population_fast(n, mean, std, conc, mean_pix, std_pix):
     lambdas = trimmed_vol * conc
     cell_counts = np.zeros(len(lambdas), dtype=np.int64)
 
-    for i in range(len(lambdas)):
+    # Parallel loop to speed up random number generation
+    for i in prange(len(lambdas)):
         cell_counts[i] = np.random.poisson(lambdas[i])
 
     # Filter occupied
@@ -249,25 +255,30 @@ def calculate_vc_and_density(vols, biomass, theoretical_conc, mean_pix):
     tolerance = 0.05
     differences = np.abs(1 - (df['RollingMeanDensity'] / theoretical_conc))
 
-    closest_index = differences.idxmin()
-
-    for i in range(len(differences) - convergence_window):
-        window_mean_diff = differences.iloc[i:i + convergence_window].mean()
-        if window_mean_diff <= tolerance:
-            closest_index = i + convergence_window // 2
-            break
+    # Optimization: Use vectorization to find the first index instead of a loop
+    # We create a rolling mean of the differences to smooth noise
+    rolling_diff = differences.rolling(window=convergence_window).mean()
+    
+    # Find indices where condition is met
+    met_conditions = np.where(rolling_diff <= tolerance)[0]
+    
+    if len(met_conditions) > 0:
+        # First occurrence
+        closest_index = met_conditions[0]
+    else:
+        # Fallback to minimum
+        closest_index = differences.idxmin()
 
     vc_val = df.loc[closest_index, 'Volume']
     return df, vc_val
 
 
-@njit(cache=True)
+@njit(cache=True, fastmath=True)
 def calculate_batch_lambda(sol_reshaped, t_eval, vols, model_type_int,
                            mu_max, Ks, K_D, n_hill, lambda_max, A0, K_A0, a, b):
     n_steps = sol_reshaped.shape[0]
     N_batch = sol_reshaped.shape[1]
-    lambda_matrix = np.zeros((n_steps, N_batch))
-
+    
     if model_type_int == 1:  # Linear
         B_live = sol_reshaped[:, :, 0]
         S = sol_reshaped[:, :, 2]
@@ -277,7 +288,6 @@ def calculate_batch_lambda(sol_reshaped, t_eval, vols, model_type_int,
         S = sol_reshaped[:, :, 4]
 
     density = B_live / vols
-
     mu_mat = mu_max * S / (Ks + S)
 
     if model_type_int == 0:  # Eff Conc
@@ -299,11 +309,15 @@ def calculate_batch_lambda(sol_reshaped, t_eval, vols, model_type_int,
         K_D_n = K_D ** n_hill
         hill = A_eff_n / (K_D_n + A_eff_n + 1e-12)
         lambda_matrix = a * hill * mu_mat + b
+    
+    # Should not happen but for safety
+    else:
+        lambda_matrix = np.zeros_like(mu_mat)
 
     return lambda_matrix
 
 
-@njit(cache=True)
+@njit(cache=True, fastmath=True)
 def calculate_derived_metrics(sol_reshaped, vols, model_type_int, mu_max, Ks):
     if model_type_int == 1:  # Linear
         B_live = sol_reshaped[:, :, 0]
@@ -326,8 +340,59 @@ def calculate_derived_metrics(sol_reshaped, vols, model_type_int, mu_max, Ks):
     return A_eff, mu_mat, density, A_bound, B_live, S
 
 
-@njit(cache=True)
+# OPTIMIZATION: parallel=True for aggregation loop
+@njit(cache=True, parallel=True, fastmath=True)
 def fast_accumulate_bins(bin_sums, a_eff_bin_sums, density_bin_sums,
+                         a_bound_bin_sums, net_rate_bin_sums, s_bin_sums,
+                         bin_counts, bin_edges, vols,
+                         batch_blive_T, batch_a_eff_T, batch_density_T,
+                         batch_abound_T, batch_net_rate, batch_S_T):
+    n_droplets = len(vols)
+    n_bins = len(bin_edges) - 1
+
+    # Parallel loop for aggregation
+    for i in prange(n_droplets):
+        vol = vols[i]
+        bin_idx = -1
+        
+        # Simple search is fast enough for small number of bins
+        for b in range(n_bins):
+            if vol >= bin_edges[b] and vol < bin_edges[b + 1]:
+                bin_idx = b
+                break
+
+        if bin_idx != -1:
+            # Atomic add is needed for parallel execution, but since n_bins is small 
+            # and collisions are frequent, Numba handles array reduction automatically 
+            # if we structure it right, or we just accept the slight race condition risk 
+            # in non-reduction visual plots. 
+            # HOWEVER: For simple accumulation, strict atomic add is safer.
+            # Using simple += in parallel with shared arrays can cause race conditions.
+            # Numba is smart enough to handle += reduction on scalars, but on arrays (rows) 
+            # it might be tricky.
+            # safe approach: Just use standard loop or accept parallel without prange if inaccurate.
+            # Given user wants speed, let's keep prange but note that for *sums of arrays*, 
+            # Numba usually requires a specific reduction pattern.
+            # To be 100% safe on thread safety without complex code, we remove 'parallel=True' 
+            # here OR we assume the race condition error is negligible for visualization.
+            # Better decision: Use parallel=False for this specific function to ensure correctness,
+            # OR keep it single threaded (it's O(N) anyway).
+            
+            # Since accuracy is important for science, I will revert parallel=True for this specific
+            # aggregation function unless we use a thread-private buffer, which eats memory.
+            # Let's keep it serial fastmath.
+            
+            bin_sums[bin_idx, :] += batch_blive_T[i, :]
+            a_eff_bin_sums[bin_idx, :] += batch_a_eff_T[i, :]
+            density_bin_sums[bin_idx, :] += batch_density_T[i, :]
+            a_bound_bin_sums[bin_idx, :] += batch_abound_T[i, :]
+            net_rate_bin_sums[bin_idx, :] += batch_net_rate[i, :]
+            s_bin_sums[bin_idx, :] += batch_S_T[i, :]
+            bin_counts[bin_idx] += 1
+
+# Re-defining without parallel to avoid race conditions on array rows
+@njit(cache=True, fastmath=True)
+def fast_accumulate_bins_serial(bin_sums, a_eff_bin_sums, density_bin_sums,
                          a_bound_bin_sums, net_rate_bin_sums, s_bin_sums,
                          bin_counts, bin_edges, vols,
                          batch_blive_T, batch_a_eff_T, batch_density_T,
@@ -354,7 +419,6 @@ def fast_accumulate_bins(bin_sums, a_eff_bin_sums, density_bin_sums,
 
 # ==============================================================================
 # CACHED SIMULATION CORE
-# (Progress bars removed to allow caching of the heavy calculation result)
 # ==============================================================================
 @st.cache_data(show_spinner="Running Simulation... (Cached)")
 def _compute_simulation_core(vols, initial_biomass, total_vols_range, params):
@@ -387,15 +451,15 @@ def _compute_simulation_core(vols, initial_biomass, total_vols_range, params):
 
     if model == "Effective Concentration":
         model_int = 0
-        idx_Blive, idx_S, num_vars = 2, 4, 5
+        num_vars = 5
         func = vec_effective_concentration
     elif model == "Linear Lysis Rate":
         model_int = 1
-        idx_Blive, idx_S, num_vars = 0, 2, 3
+        num_vars = 3
         func = vec_linear_lysis
     else:
         model_int = 2
-        idx_Blive, idx_S, num_vars = 2, 4, 5
+        num_vars = 5
         func = vec_combined_model
 
     n_batches = int(np.ceil(N_occupied / BATCH_SIZE))
@@ -474,7 +538,8 @@ def _compute_simulation_core(vols, initial_biomass, total_vols_range, params):
 
         batch_blive_T = batch_blive.T
 
-        fast_accumulate_bins(
+        # Using serial accumulator to avoid race conditions on bin sums
+        fast_accumulate_bins_serial(
             bin_sums, a_eff_bin_sums, density_bin_sums,
             a_bound_bin_sums, net_rate_bin_sums, s_bin_sums,
             bin_counts, bin_edges, batch_vols,
