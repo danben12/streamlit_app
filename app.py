@@ -137,7 +137,9 @@ def render_sidebar():
         params['mean_log10'] = st.number_input("Mean Log10 Volume", 1.0, 8.0, 3.0, 0.1)
         params['std_log10'] = st.number_input("Std Dev Log10", 0.1, 3.0, 1.2, 0.1)
         params['n_samples'] = st.number_input("N Samples (Droplets)", 1000, 100000, 17000, 1000)
-        params['conc_exp'] = st.slider("Concentration Exp (10^x)", -7.0, -1.0, -4.3, 0.1)
+        
+        # [CHANGE: UPDATED DEFAULT TO -3.0 TO ENSURE POPULATION EXISTS]
+        params['conc_exp'] = st.slider("Concentration Exp (10^x)", -7.0, -1.0, -3.0, 0.1)
         params['concentration'] = 10 ** params['conc_exp']
 
         # --- Global Params ---
@@ -216,6 +218,7 @@ def generate_population(mean, std, n, conc, mean_pix, std_pix):
 
 
 def calculate_vc_and_density(vols, biomass, theoretical_conc, mean_pix):
+    # [FIX: GUARD CLAUSE]
     if len(vols) == 0:
         return pd.DataFrame(), 0.0
     
@@ -986,6 +989,7 @@ def main():
         n_trimmed = len(total_vols)
         N_occupied = len(vols)
         
+        # [FIX: CRASH PREVENTION]
         if N_occupied > 0:
             df_density, vc_val = calculate_vc_and_density(vols, initial_biomass, params['concentration'], MEAN_PIXELS)
             sim_output = run_simulation(
