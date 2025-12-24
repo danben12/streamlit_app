@@ -11,7 +11,7 @@ from scipy.stats import linregress
 from bokeh.layouts import column
 from bokeh.models import Div
 
-# --- NUMBA IMPORTS ---
+# --- NUMBA IMPORTS (Kept for calculation speed, not caching) ---
 from numba import njit, prange
 
 # ==========================================
@@ -19,19 +19,16 @@ from numba import njit, prange
 # ==========================================
 
 def configure_page():
-    st.set_page_config(page_title="Growth - Lysis Model simulation", layout="wide")
-    st.title("Growth - Lysis Model simulation")
+    st.set_page_config(page_title="Growth - Lysis Model (No Cache)", layout="wide")
+    st.title("Growth - Lysis Model simulation (No Caching)")
 
 # ==========================================
-# 2. ODE MATH MODELS (OPTIMIZED)
+# 2. ODE MATH MODELS
 # ==========================================
 
-# OPTIMIZATION: fastmath=True allows simpler CPU instructions. 
-# nogil=True allows releasing the Global Interpreter Lock.
 @njit(cache=True, fastmath=True, nogil=True)
 def vec_effective_concentration(y_flat, t, N, V, mu_max, Ks, Y, K_on, K_off, lambda_max, K_D, n):
     y = y_flat.reshape((N, 5))
-    # Direct slicing creates views, which is fast
     A_free = y[:, 0]
     A_bound = y[:, 1]
     B_live = y[:, 2]
@@ -110,14 +107,13 @@ def vec_combined_model(y_flat, t, N, V, mu_max, Ks, Y, K_on, K_off, K_D, n, a, b
 
 
 # ==========================================
-# 3. UI COMPONENTS (SIDEBAR WITH FORM)
+# 3. UI COMPONENTS
 # ==========================================
 
 def render_sidebar():
     st.sidebar.header("Simulation Settings")
     params = {}
 
-    # WRAP INPUTS IN A FORM FOR PERFORMANCE
     with st.sidebar.form(key='simulation_form'):
         
         # --- Model Selection ---
@@ -159,8 +155,6 @@ def render_sidebar():
             for key in defaults:
                 params[key] = 0.0
 
-            # Logic to show relevant inputs (Note: in a form, conditional visibility 
-            # works, but value updates only happen on submit)
             if params['model'] in ["Effective Concentration", "Combined Model"]:
                 params['K_on'] = st.number_input("K_on", value=750.0)
                 params['K_off'] = st.number_input("K_off", value=0.01)
@@ -184,12 +178,11 @@ def render_sidebar():
 
 
 # ==========================================
-# 4. CORE LOGIC & CALCULATION FUNCTIONS
+# 4. CORE LOGIC
 # ==========================================
 
-# OPTIMIZATION: parallel=True uses multiple CPU cores for the loop
 @njit(cache=True, parallel=True, fastmath=True)
-def _generate_population_fast(n, mean, std, conc, mean_pix, std_pix):
+def generate_population_numba(n, mean, std, conc, mean_pix, std_pix):
     # 1. Droplet Volumes
     log_data = np.random.normal(mean, std, int(n))
     volume_data = 10 ** log_data
@@ -197,23 +190,20 @@ def _generate_population_fast(n, mean, std, conc, mean_pix, std_pix):
     mask_vol = (volume_data >= 1000) & (volume_data <= 1e8)
     trimmed_vol = volume_data[mask_vol]
 
-    # 2. Poisson loading (Cell Counts)
+    # 2. Poisson loading
     lambdas = trimmed_vol * conc
     cell_counts = np.zeros(len(lambdas), dtype=np.int64)
 
-    # Parallel loop to speed up random number generation
     for i in prange(len(lambdas)):
         cell_counts[i] = np.random.poisson(lambdas[i])
 
-    # Filter occupied
     occupied_mask = cell_counts > 0
     final_vols = trimmed_vol[occupied_mask].copy()
     final_counts = cell_counts[occupied_mask].copy()
 
-    # 3. Biomass Conversion with Noise
+    # 3. Biomass Conversion
     base_biomass = final_counts * mean_pix
 
-    # Add noise
     noise_base = np.random.normal(0.0, 1.0, len(final_counts))
     noise_scale = np.sqrt(final_counts) * std_pix
     noise = noise_base * noise_scale
@@ -224,12 +214,8 @@ def _generate_population_fast(n, mean, std, conc, mean_pix, std_pix):
 
     return final_vols, final_counts, final_biomass, trimmed_vol
 
-@st.cache_data(show_spinner=False)
-def generate_population(mean, std, n, conc, mean_pix, std_pix):
-    return _generate_population_fast(n, mean, std, conc, mean_pix, std_pix)
 
-
-@st.cache_data(show_spinner=False)
+# NO CACHING DECORATOR HERE
 def calculate_vc_and_density(vols, biomass, theoretical_conc, mean_pix):
     effective_count = biomass / mean_pix
 
@@ -245,7 +231,6 @@ def calculate_vc_and_density(vols, biomass, theoretical_conc, mean_pix):
     tolerance = 0.05
     differences = np.abs(1 - (df['RollingMeanDensity'] / theoretical_conc))
 
-    # Optimization: Use vectorization to find the first index instead of a loop
     rolling_diff = differences.rolling(window=convergence_window).mean()
     met_conditions = np.where(rolling_diff <= tolerance)[0]
     
@@ -261,11 +246,7 @@ def calculate_vc_and_density(vols, biomass, theoretical_conc, mean_pix):
 @njit(cache=True, fastmath=True)
 def calculate_batch_lambda(sol_reshaped, t_eval, vols, model_type_int,
                            mu_max, Ks, K_D, n_hill, lambda_max, A0, K_A0, a, b):
-    # n_steps = sol_reshaped.shape[0]
-    # N_batch = sol_reshaped.shape[1]
-    
     if model_type_int == 1:  # Linear
-        # B_live = sol_reshaped[:, :, 0]
         S = sol_reshaped[:, :, 2]
     else:  # Eff Conc or Combined
         A_bound = sol_reshaped[:, :, 1]
@@ -324,8 +305,6 @@ def calculate_derived_metrics(sol_reshaped, vols, model_type_int, mu_max, Ks):
     return A_eff, mu_mat, density, A_bound, B_live, S
 
 
-# Using serial accumulator to avoid race conditions on bin sums. 
-# fastmath=True makes this O(N) loop very fast.
 @njit(cache=True, fastmath=True)
 def fast_accumulate_bins_serial(bin_sums, a_eff_bin_sums, density_bin_sums,
                          a_bound_bin_sums, net_rate_bin_sums, s_bin_sums,
@@ -338,7 +317,6 @@ def fast_accumulate_bins_serial(bin_sums, a_eff_bin_sums, density_bin_sums,
     for i in range(n_droplets):
         vol = vols[i]
         bin_idx = -1
-        # Simple scan is efficient for small # of bins
         for b in range(n_bins):
             if vol >= bin_edges[b] and vol < bin_edges[b + 1]:
                 bin_idx = b
@@ -353,11 +331,8 @@ def fast_accumulate_bins_serial(bin_sums, a_eff_bin_sums, density_bin_sums,
             s_bin_sums[bin_idx, :] += batch_S_T[i, :]
             bin_counts[bin_idx] += 1
 
-# ==============================================================================
-# CACHED SIMULATION CORE
-# ==============================================================================
-@st.cache_data(show_spinner="Running Simulation... (Cached)")
-def _compute_simulation_core(vols, initial_biomass, total_vols_range, params):
+# NO CACHING DECORATOR HERE
+def run_simulation_core(vols, initial_biomass, total_vols_range, params):
     BATCH_SIZE = 2000
     t_eval = np.arange(params['t_start'], params['t_end'] + params['dt'] / 100.0, params['dt'])
 
@@ -399,6 +374,9 @@ def _compute_simulation_core(vols, initial_biomass, total_vols_range, params):
         func = vec_combined_model
 
     n_batches = int(np.ceil(N_occupied / BATCH_SIZE))
+    
+    # Progress bar only makes sense if not cached, so we can add it back here
+    progress_bar = st.progress(0)
 
     for i_batch in range(n_batches):
         start_idx = i_batch * BATCH_SIZE
@@ -481,14 +459,11 @@ def _compute_simulation_core(vols, initial_biomass, total_vols_range, params):
             batch_blive_T, batch_a_eff_T, batch_density_T,
             batch_abound_T, batch_net_rate, batch_S_T
         )
+        progress_bar.progress((i_batch + 1) / n_batches)
 
+    progress_bar.empty()
     return (bin_sums, bin_counts, final_counts_all, t_eval, bin_edges,
             a_eff_bin_sums, density_bin_sums, a_bound_bin_sums, net_rate_bin_sums, s_bin_sums)
-
-
-def run_simulation(vols, initial_biomass, total_vols_range, params):
-    # Wrapper function for the cached core logic
-    return _compute_simulation_core(vols, initial_biomass, total_vols_range, params)
 
 
 # ==========================================
@@ -919,12 +894,11 @@ def main():
         st.session_state.sim_results = None
 
     # Logic: Run Simulation ONLY if button clicked OR first run (to show initial data)
-    # If you want it blank on startup, remove 'or st.session_state.sim_results is None'
     should_run = submitted or st.session_state.sim_results is None
 
     if should_run:
-        # --- Generate Data ---
-        vols, counts, initial_biomass, total_vols = generate_population(
+        # --- Generate Data (Direct call, no cache) ---
+        vols, counts, initial_biomass, total_vols = generate_population_numba(
             params['mean_log10'], params['std_log10'], params['n_samples'],
             params['concentration'], MEAN_PIXELS, STD_PIXELS
         )
@@ -938,18 +912,19 @@ def main():
         n_trimmed = len(total_vols)
         N_occupied = len(vols)
         
-        # --- Calculate Derived ---
+        # --- Calculate Derived (Direct call, no cache) ---
         df_density, vc_val = calculate_vc_and_density(vols, initial_biomass, params['concentration'], MEAN_PIXELS)
 
-        # --- Run Simulation (Heavy Lift) ---
+        # --- Run Simulation (Direct call, no cache) ---
         if N_occupied > 0:
-            sim_output = run_simulation(
+            sim_output = run_simulation_core(
                 vols, initial_biomass, (total_vols.min(), total_vols.max()), params
             )
         else:
             sim_output = None
 
         # --- Store in Session State ---
+        # We must keep this to allow plot switching without re-running the heavy calculation
         st.session_state.sim_results = {
             "vols": vols,
             "counts": counts,
@@ -960,38 +935,29 @@ def main():
             "df_density": df_density,
             "vc_val": vc_val,
             "sim_output": sim_output,
-            "params": params # Save params used for this run
+            "params": params
         }
 
     # --- RETRIEVE DATA FROM SESSION STATE ---
-    # This happens on every interaction (like changing plot type) without re-running sim
     data = st.session_state.sim_results
 
     if data is None or data["N_occupied"] == 0:
         st.error("No occupied droplets found. Try increasing Concentration or Mean Volume and Click Run.")
         st.stop()
 
-    # Unpack for readability
     n_trimmed = data["n_trimmed"]
     N_occupied = data["N_occupied"]
     pct = (N_occupied / n_trimmed * 100) if n_trimmed > 0 else 0.0
     
-    # --- Header Metrics ---
     col1, col2, col3 = st.columns(3)
     col1.metric("Total Droplets (Simulated)", f"{n_trimmed:,}")
     col2.metric("Occupied Droplets", f"{N_occupied:,} ({pct:.2f}%)")
-    col3.metric("Antibiotic Conc (A0)", f"{data['params']['A0']}") # Use stored A0 to match results
+    col3.metric("Antibiotic Conc (A0)", f"{data['params']['A0']}")
 
-    # Unpack Simulation Results
     (bin_sums, bin_counts, final_biomass, t_eval, bin_edges,
      a_eff_bin_sums, density_bin_sums, a_bound_bin_sums, net_rate_bin_sums, s_bin_sums) = data["sim_output"]
 
     st.divider()
-
-    # ==========================================
-    # UI LAYOUT: SELECTOR (OUTSIDE FORM)
-    # ==========================================
-    # Changing this selector is instant because it uses cached session_state data
 
     st.subheader("Results Analysis")
 
