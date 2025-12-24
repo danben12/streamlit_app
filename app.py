@@ -224,12 +224,10 @@ def _generate_population_fast(n, mean, std, conc, mean_pix, std_pix):
 
     return final_vols, final_counts, final_biomass, trimmed_vol
 
-@st.cache_data(show_spinner=False)
 def generate_population(mean, std, n, conc, mean_pix, std_pix):
     return _generate_population_fast(n, mean, std, conc, mean_pix, std_pix)
 
 
-@st.cache_data(show_spinner=False)
 def calculate_vc_and_density(vols, biomass, theoretical_conc, mean_pix):
     effective_count = biomass / mean_pix
 
@@ -356,7 +354,6 @@ def fast_accumulate_bins_serial(bin_sums, a_eff_bin_sums, density_bin_sums,
 # ==============================================================================
 # CACHED SIMULATION CORE
 # ==============================================================================
-@st.cache_data(show_spinner="Running Simulation... (Cached)")
 def _compute_simulation_core(vols, initial_biomass, total_vols_range, params):
     BATCH_SIZE = 2000
     t_eval = np.arange(params['t_start'], params['t_end'] + params['dt'] / 100.0, params['dt'])
@@ -1070,3 +1067,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
