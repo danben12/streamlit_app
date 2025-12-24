@@ -137,7 +137,9 @@ def render_sidebar():
         params['mean_log10'] = st.number_input("Mean Log10 Volume", 1.0, 8.0, 3.0, 0.1)
         params['std_log10'] = st.number_input("Std Dev Log10", 0.1, 3.0, 1.2, 0.1)
         params['n_samples'] = st.number_input("N Samples (Droplets)", 1000, 100000, 17000, 1000)
-        params['conc_exp'] = st.slider("Concentration Exp (10^x)", -7.0, -1.0, -4.3, 0.1)
+        
+        # [CHANGE: UPDATED DEFAULT TO -3.0 TO ENSURE POPULATION EXISTS]
+        params['conc_exp'] = st.slider("Concentration Exp (10^x)", -7.0, -1.0, -3.0, 0.1)
         params['concentration'] = 10 ** params['conc_exp']
 
         # --- Global Params ---
@@ -334,24 +336,24 @@ def fast_accumulate_bins_serial(bin_sums, a_eff_bin_sums, density_bin_sums,
             bin_counts[bin_idx] += 1
 
 # ==============================================================================
-# PARALLEL BATCH PROCESSING LOGIC
+# PARALLEL SINGLE-DROPLET PROCESSING LOGIC
 # ==============================================================================
 
-def solve_single_batch(batch_indices, vols, initial_biomass, t_eval, params, bin_edges):
+def solve_individual_droplet(idx, single_vol, single_biomass, t_eval, params, bin_edges):
     """
-    Pure function to solve a single batch of droplets.
-    Returns the accumulated histograms for this specific batch.
+    Solves for ONE droplet.
+    Inputs are scalars (not arrays).
     """
-    start_idx, end_idx = batch_indices
-    current_batch_size = end_idx - start_idx
     
-    batch_vols = vols[start_idx:end_idx]
-    batch_biomass = initial_biomass[start_idx:end_idx]
+    # We must wrap scalars into 1-item arrays so the Numba functions (which expect arrays) still work.
+    batch_vols = np.array([single_vol])
+    batch_biomass = np.array([single_biomass])
     
+    current_batch_size = 1
     N_STEPS = len(t_eval)
     n_bins = len(bin_edges) - 1
 
-    # Local accumulators for this thread
+    # Local accumulators for this ONE task
     local_bin_sums = np.zeros((n_bins, N_STEPS))
     local_a_eff = np.zeros((n_bins, N_STEPS))
     local_density = np.zeros((n_bins, N_STEPS))
@@ -449,12 +451,12 @@ def solve_single_batch(batch_indices, vols, initial_biomass, t_eval, params, bin
         batch_abound_T, batch_net_rate, batch_S_T
     )
 
-    return (start_idx, end_idx, final_c, local_bin_sums, local_bin_counts, 
+    # Return scalar final_c (extracted from array)
+    return (idx, final_c[0], local_bin_sums, local_bin_counts, 
             local_a_eff, local_density, local_a_bound, local_net_rate, local_s_sums)
 
 
 def _compute_simulation_core(vols, initial_biomass, total_vols_range, params):
-    BATCH_SIZE = 2500 # Slightly larger batch size for parallel execution efficiency
     t_eval = np.arange(params['t_start'], params['t_end'] + params['dt'] / 100.0, params['dt'])
 
     if len(t_eval) < 2:
@@ -479,34 +481,37 @@ def _compute_simulation_core(vols, initial_biomass, total_vols_range, params):
     total_bin_counts = np.zeros(n_bins)
     final_counts_all = np.zeros(N_occupied)
 
-    n_batches = int(np.ceil(N_occupied / BATCH_SIZE))
-
-    # [PARALLEL EXECUTION SETUP]
+    # [PARALLEL INDIVIDUAL DROPLET PROCESSING]
     progress_bar = st.progress(0, text="Initializing parallel simulation...")
     start_time = time.time()
     
-    # Use ThreadPoolExecutor because odeint releases GIL
+    # Using ThreadPoolExecutor as a worker queue.
+    # It will use as many threads as your CPU supports (usually # of cores + 4).
+    # As one task completes, the thread picks up the next one.
     with ThreadPoolExecutor() as executor:
+        
+        # Submit ALL droplets as individual tasks
         futures = []
-        for i_batch in range(n_batches):
-            start_idx = i_batch * BATCH_SIZE
-            end_idx = min((i_batch + 1) * BATCH_SIZE, N_occupied)
-            
+        for i in range(N_occupied):
             futures.append(executor.submit(
-                solve_single_batch, 
-                (start_idx, end_idx), 
-                vols, initial_biomass, t_eval, params, bin_edges
+                solve_individual_droplet, 
+                i, 
+                vols[i], 
+                initial_biomass[i], 
+                t_eval, 
+                params, 
+                bin_edges
             ))
 
-        # Process results as they complete
-        batches_completed = 0
+        # Process results as they come in (Queue consumption)
+        completed_count = 0
         for future in as_completed(futures):
             try:
-                (start_idx, end_idx, final_c, 
+                (idx, final_c_val, 
                  l_sums, l_counts, l_a_eff, l_dens, l_abound, l_net, l_s) = future.result()
 
                 # Merge Local Results into Global
-                final_counts_all[start_idx:end_idx] = final_c
+                final_counts_all[idx] = final_c_val
                 total_bin_sums += l_sums
                 total_bin_counts += l_counts
                 total_a_eff += l_a_eff
@@ -515,22 +520,22 @@ def _compute_simulation_core(vols, initial_biomass, total_vols_range, params):
                 total_net_rate += l_net
                 total_s_sums += l_s
 
-                batches_completed += 1
+                completed_count += 1
                 
-                # Update UI
-                elapsed_sec = time.time() - start_time
-                avg_time = elapsed_sec / batches_completed
-                eta_sec = avg_time * (n_batches - batches_completed)
-                
-                elapsed_str = f"{int(elapsed_sec // 60):02d}:{int(elapsed_sec % 60):02d}"
-                eta_str = f"{int(eta_sec // 60):02d}:{int(eta_sec % 60):02d}"
-                
-                prog_val = min(batches_completed / n_batches, 1.0)
-                progress_bar.progress(prog_val, text=f"Batch {batches_completed}/{n_batches} | Elapsed: {elapsed_str} | ETA: {eta_str}")
+                # Update UI every ~50 items to avoid UI lag
+                if completed_count % 50 == 0 or completed_count == N_occupied:
+                    elapsed_sec = time.time() - start_time
+                    avg_time = elapsed_sec / completed_count
+                    eta_sec = avg_time * (N_occupied - completed_count)
+                    
+                    elapsed_str = f"{int(elapsed_sec // 60):02d}:{int(elapsed_sec % 60):02d}"
+                    eta_str = f"{int(eta_sec // 60):02d}:{int(eta_sec % 60):02d}"
+                    
+                    prog_val = min(completed_count / N_occupied, 1.0)
+                    progress_bar.progress(prog_val, text=f"Droplet {completed_count}/{N_occupied} | Elapsed: {elapsed_str} | ETA: {eta_str}")
             
             except Exception as e:
-                st.error(f"Simulation failed in one of the batches: {e}")
-                # Don't crash entire app, just stop bar
+                st.error(f"Simulation failed for droplet: {e}")
                 progress_bar.empty()
                 return None
 
@@ -986,6 +991,7 @@ def main():
         n_trimmed = len(total_vols)
         N_occupied = len(vols)
         
+        # [FIX: CRASH PREVENTION]
         if N_occupied > 0:
             df_density, vc_val = calculate_vc_and_density(vols, initial_biomass, params['concentration'], MEAN_PIXELS)
             sim_output = run_simulation(
