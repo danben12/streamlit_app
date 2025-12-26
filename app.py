@@ -994,7 +994,7 @@ def main():
     # Layout: Small Button on the left, Dropdown below it (or next to it, but you asked for below header)
     # We will put the button first, then the dropdown, as requested.
     
-    col_btn, _ = st.columns([1, 6])
+    col_btn, _ = st.columns([1, 7])
     with col_btn:
         run_clicked = st.button("Run Simulation", type="primary")
 
@@ -1127,6 +1127,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
