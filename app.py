@@ -966,84 +966,10 @@ def main():
     MEAN_PIXELS = 5.5
     STD_PIXELS = 1.0
 
-    # 1. Render Sidebar Inputs (No form)
+    # 1. Render Sidebar
     params = render_sidebar()
 
-    # 2. Render Run Button on Main Canvas (Above results/dropdown)
-    # We place it in a container to give it some visual separation
-    with st.container():
-        st.write("### Control Panel")
-        run_clicked = st.button("Run Simulation", type="primary", use_container_width=True)
-
-    if "sim_results" not in st.session_state:
-        st.session_state.sim_results = None
-
-    # Logic: Run if button clicked OR if no results exist yet (first load)
-    should_run = run_clicked or st.session_state.sim_results is None
-
-    if should_run:
-        vols, counts, initial_biomass, total_vols = generate_population(
-            params['mean_log10'], params['std_log10'], params['n_samples'],
-            params['concentration'], MEAN_PIXELS, STD_PIXELS
-        )
-
-        sort_idx = np.argsort(vols)
-        vols = vols[sort_idx]
-        counts = counts[sort_idx]
-        initial_biomass = initial_biomass[sort_idx]
-
-        n_trimmed = len(total_vols)
-        N_occupied = len(vols)
-        
-        if N_occupied > 0:
-            df_density, vc_val = calculate_vc_and_density(vols, initial_biomass, params['concentration'], MEAN_PIXELS)
-            sim_output = run_simulation(
-                vols, initial_biomass, (total_vols.min(), total_vols.max()), params
-            )
-        else:
-            sim_output = None
-            df_density = pd.DataFrame()
-            vc_val = 0.0
-
-        st.session_state.sim_results = {
-            "vols": vols,
-            "counts": counts,
-            "initial_biomass": initial_biomass,
-            "total_vols": total_vols,
-            "n_trimmed": n_trimmed,
-            "N_occupied": N_occupied,
-            "df_density": df_density,
-            "vc_val": vc_val,
-            "sim_output": sim_output,
-            "params": params
-        }
-
-    # 3. Display Results
-    data = st.session_state.sim_results
-
-    if data is None or data["N_occupied"] == 0:
-        st.error("No occupied droplets found. Try increasing Concentration or Mean Volume and Click Run.")
-        # We do NOT stop here anymore, so the button remains visible if you want to retry
-        return
-
-    n_trimmed = data["n_trimmed"]
-    N_occupied = data["N_occupied"]
-    pct = (N_occupied / n_trimmed * 100) if n_trimmed > 0 else 0.0
-    
-    st.divider()
-    
-    # Metrics
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total Droplets (Simulated)", f"{n_trimmed:,}")
-    col2.metric("Occupied Droplets", f"{N_occupied:,} ({pct:.2f}%)")
-    col3.metric("Antibiotic Conc (A0)", f"{data['params']['A0']}") 
-
-    (bin_sums, bin_counts, final_biomass, t_eval, bin_edges,
-     a_eff_bin_sums, density_bin_sums, a_bound_bin_sums, net_rate_bin_sums, s_bin_sums) = data["sim_output"]
-
-    st.subheader("Results Analysis")
-
-    # 4. Dropdown Menu (Now visually below the Run Button)
+    # 2. Define Plot Options early (so we can render the dropdown at the top)
     plot_options = [
         "Population Dynamics",
         "Droplet Distribution",
@@ -1057,8 +983,93 @@ def main():
         "Bound Antibiotic"
     ]
 
+    # 3. Render Controls (Button + Dropdown)
+    # We use a column layout to keep the button small and aligned to the left
+    st.write("### Control Panel")
+    
+    # Create a small column for the button so it doesn't stretch
+    col_btn, _ = st.columns([1, 5])
+    with col_btn:
+        # Removed 'use_container_width=True' to make the button smaller
+        run_clicked = st.button("Run Simulation", type="primary")
+
+    # Render Dropdown immediately below the button
     selected_plot = st.selectbox("Select Figure to Display:", plot_options)
 
+    # 4. Simulation Logic
+    if "sim_results" not in st.session_state:
+        st.session_state.sim_results = None
+
+    # Run if button clicked OR if no results exist yet
+    should_run = run_clicked or st.session_state.sim_results is None
+
+    if should_run:
+        # Show a spinner while running because the button is now above the logic
+        with st.spinner("Running simulation..."):
+            vols, counts, initial_biomass, total_vols = generate_population(
+                params['mean_log10'], params['std_log10'], params['n_samples'],
+                params['concentration'], MEAN_PIXELS, STD_PIXELS
+            )
+
+            sort_idx = np.argsort(vols)
+            vols = vols[sort_idx]
+            counts = counts[sort_idx]
+            initial_biomass = initial_biomass[sort_idx]
+
+            n_trimmed = len(total_vols)
+            N_occupied = len(vols)
+            
+            if N_occupied > 0:
+                df_density, vc_val = calculate_vc_and_density(vols, initial_biomass, params['concentration'], MEAN_PIXELS)
+                sim_output = run_simulation(
+                    vols, initial_biomass, (total_vols.min(), total_vols.max()), params
+                )
+            else:
+                sim_output = None
+                df_density = pd.DataFrame()
+                vc_val = 0.0
+
+            st.session_state.sim_results = {
+                "vols": vols,
+                "counts": counts,
+                "initial_biomass": initial_biomass,
+                "total_vols": total_vols,
+                "n_trimmed": n_trimmed,
+                "N_occupied": N_occupied,
+                "df_density": df_density,
+                "vc_val": vc_val,
+                "sim_output": sim_output,
+                "params": params
+            }
+
+    # 5. Display Results
+    data = st.session_state.sim_results
+
+    if data is None or data["N_occupied"] == 0:
+        st.error("No occupied droplets found. Try increasing Concentration or Mean Volume and Click Run.")
+        return
+
+    n_trimmed = data["n_trimmed"]
+    N_occupied = data["N_occupied"]
+    pct = (N_occupied / n_trimmed * 100) if n_trimmed > 0 else 0.0
+    
+    st.divider()
+    
+    # Metrics
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Total Droplets", f"{n_trimmed:,}")
+    col2.metric("Occupied", f"{N_occupied:,} ({pct:.2f}%)")
+    col3.metric("Antibiotic Conc", f"{data['params']['A0']}") 
+
+    # Unpack Results
+    (bin_sums, bin_counts, final_biomass, t_eval, bin_edges,
+     a_eff_bin_sums, density_bin_sums, a_bound_bin_sums, net_rate_bin_sums, s_bin_sums) = data["sim_output"]
+
+    st.subheader("Results Analysis")
+
+    # 6. Render Plots (Using the selection from the dropdown at the top)
+    # Note: We don't need to re-render the dropdown here, it's already at the top.
+    
     with st.container():
         if selected_plot == "Population Dynamics":
             st.markdown("#### Mean Growth curves (Normalized Biomass)")
@@ -1118,5 +1129,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
