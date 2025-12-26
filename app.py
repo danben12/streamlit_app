@@ -116,70 +116,66 @@ def render_sidebar():
     st.sidebar.header("Simulation Settings")
     params = {}
 
-    with st.sidebar.form(key='simulation_form'):
-        
-        # --- Model Selection ---
-        model_choices = ["Effective Concentration", "Linear Lysis Rate", "Combined Model"]
-        params['model'] = st.selectbox("Select Model", model_choices)
+    # --- Removed st.form to allow main canvas triggering ---
+    
+    # --- Model Selection ---
+    model_choices = ["Effective Concentration", "Linear Lysis Rate", "Combined Model"]
+    params['model'] = st.sidebar.selectbox("Select Model", model_choices)
 
-        # --- Time Settings ---
-        st.subheader("Time Settings")
-        col_t1, col_t2, col_t3 = st.columns(3)
-        with col_t1:
-            params['t_start'] = st.number_input("Start (h)", value=0.0, step=1.0)
-        with col_t2:
-            params['t_end'] = st.number_input("End (h)", value=24.0, step=1.0)
-        with col_t3:
-            params['dt'] = st.number_input("Step (h)", value=1.0, min_value=0.01, step=0.5)
+    # --- Time Settings ---
+    st.sidebar.subheader("Time Settings")
+    col_t1, col_t2, col_t3 = st.sidebar.columns(3)
+    with col_t1:
+        params['t_start'] = st.number_input("Start (h)", value=0.0, step=1.0)
+    with col_t2:
+        params['t_end'] = st.number_input("End (h)", value=24.0, step=1.0)
+    with col_t3:
+        params['dt'] = st.number_input("Step (h)", value=1.0, min_value=0.01, step=0.5)
 
-        # --- Population Gen ---
-        st.subheader("Population Generation")
-        params['mean_log10'] = st.number_input("Mean Log10 Volume", 1.0, 8.0, 3.0, 0.1)
-        params['std_log10'] = st.number_input("Std Dev Log10", 0.1, 3.0, 1.2, 0.1)
-        params['n_samples'] = st.number_input("N Samples (Droplets)", 1000, 100000, 17000, 1000)
-        
-        # [CHANGE: UPDATED DEFAULT TO -3.0 TO ENSURE POPULATION EXISTS]
-        params['conc_exp'] = st.slider("Concentration Exp (10^x)", -7.0, -1.0, -4.3, 0.1)
-        params['concentration'] = 10 ** params['conc_exp']
+    # --- Population Gen ---
+    st.sidebar.subheader("Population Generation")
+    params['mean_log10'] = st.sidebar.number_input("Mean Log10 Volume", 1.0, 8.0, 3.0, 0.1)
+    params['std_log10'] = st.sidebar.number_input("Std Dev Log10", 0.1, 3.0, 1.2, 0.1)
+    params['n_samples'] = st.sidebar.number_input("N Samples (Droplets)", 1000, 100000, 17000, 1000)
+    
+    params['conc_exp'] = st.sidebar.slider("Concentration Exp (10^x)", -7.0, -1.0, -4.3, 0.1)
+    params['concentration'] = 10 ** params['conc_exp']
 
-        # --- Global Params ---
-        st.subheader("Global Parameters")
-        tab1, tab2 = st.tabs(["Growth", "Drugs/Lysis"])
+    # --- Global Params ---
+    st.sidebar.subheader("Global Parameters")
+    tab1, tab2 = st.sidebar.tabs(["Growth", "Drugs/Lysis"])
 
-        with tab1:
-            params['mu_max'] = st.number_input("mu_max", value=0.7)
-            params['Y'] = st.number_input("Yield (Y)", value=0.001, format="%.4f")
-            params['S0'] = st.number_input("Initial S0", value=1.0)
-            params['Ks'] = st.number_input("Ks", value=2.0)
+    with tab1:
+        params['mu_max'] = st.number_input("mu_max", value=0.7)
+        params['Y'] = st.number_input("Yield (Y)", value=0.001, format="%.4f")
+        params['S0'] = st.number_input("Initial S0", value=1.0)
+        params['Ks'] = st.number_input("Ks", value=2.0)
 
-        with tab2:
-            params['A0'] = st.number_input("Initial Antibiotic (A0)", value=10.0)
+    with tab2:
+        params['A0'] = st.number_input("Initial Antibiotic (A0)", value=10.0)
 
-            defaults = ['K_on', 'K_off', 'K_D', 'n_hill', 'lambda_max', 'a', 'b', 'K_A0']
-            for key in defaults:
-                params[key] = 0.0
+        defaults = ['K_on', 'K_off', 'K_D', 'n_hill', 'lambda_max', 'a', 'b', 'K_A0']
+        for key in defaults:
+            params[key] = 0.0
 
-            if params['model'] in ["Effective Concentration", "Combined Model"]:
-                params['K_on'] = st.number_input("K_on", value=750.0)
-                params['K_off'] = st.number_input("K_off", value=0.01)
-                params['K_D'] = st.number_input("K_D", value=12000.0)
-                params['n_hill'] = st.number_input("Hill coeff (n)", value=20.0)
+        if params['model'] in ["Effective Concentration", "Combined Model"]:
+            params['K_on'] = st.number_input("K_on", value=750.0)
+            params['K_off'] = st.number_input("K_off", value=0.01)
+            params['K_D'] = st.number_input("K_D", value=12000.0)
+            params['n_hill'] = st.number_input("Hill coeff (n)", value=20.0)
 
-            if params['model'] == "Effective Concentration":
-                params['lambda_max'] = st.number_input("lambda_max", value=1.0)
+        if params['model'] == "Effective Concentration":
+            params['lambda_max'] = st.number_input("lambda_max", value=1.0)
 
-            if params['model'] in ["Linear Lysis Rate", "Combined Model"]:
-                params['a'] = st.number_input("a (Growth Lysis)", value=3.0)
-                params['b'] = st.number_input("b (Base Lysis)", value=0.1)
+        if params['model'] in ["Linear Lysis Rate", "Combined Model"]:
+            params['a'] = st.number_input("a (Growth Lysis)", value=3.0)
+            params['b'] = st.number_input("b (Base Lysis)", value=0.1)
 
-            if params['model'] == "Linear Lysis Rate":
-                params['K_A0'] = st.number_input("K_A0", value=10.0)
-                params['n_hill'] = st.number_input("Hill coeff (n)", value=20.0)
+        if params['model'] == "Linear Lysis Rate":
+            params['K_A0'] = st.number_input("K_A0", value=10.0)
+            params['n_hill'] = st.number_input("Hill coeff (n)", value=20.0)
 
-        submitted = st.form_submit_button("Run Simulation")
-
-    return params, submitted
-
+    return params
 
 # ==========================================
 # 4. CORE LOGIC & CALCULATION FUNCTIONS
@@ -970,12 +966,20 @@ def main():
     MEAN_PIXELS = 5.5
     STD_PIXELS = 1.0
 
-    params, submitted = render_sidebar()
+    # 1. Render Sidebar Inputs (No form)
+    params = render_sidebar()
+
+    # 2. Render Run Button on Main Canvas (Above results/dropdown)
+    # We place it in a container to give it some visual separation
+    with st.container():
+        st.write("### Control Panel")
+        run_clicked = st.button("Run Simulation", type="primary", use_container_width=True)
 
     if "sim_results" not in st.session_state:
         st.session_state.sim_results = None
 
-    should_run = submitted or st.session_state.sim_results is None
+    # Logic: Run if button clicked OR if no results exist yet (first load)
+    should_run = run_clicked or st.session_state.sim_results is None
 
     if should_run:
         vols, counts, initial_biomass, total_vols = generate_population(
@@ -991,7 +995,6 @@ def main():
         n_trimmed = len(total_vols)
         N_occupied = len(vols)
         
-        # [FIX: CRASH PREVENTION]
         if N_occupied > 0:
             df_density, vc_val = calculate_vc_and_density(vols, initial_biomass, params['concentration'], MEAN_PIXELS)
             sim_output = run_simulation(
@@ -1015,16 +1018,21 @@ def main():
             "params": params
         }
 
+    # 3. Display Results
     data = st.session_state.sim_results
 
     if data is None or data["N_occupied"] == 0:
         st.error("No occupied droplets found. Try increasing Concentration or Mean Volume and Click Run.")
-        st.stop()
+        # We do NOT stop here anymore, so the button remains visible if you want to retry
+        return
 
     n_trimmed = data["n_trimmed"]
     N_occupied = data["N_occupied"]
     pct = (N_occupied / n_trimmed * 100) if n_trimmed > 0 else 0.0
     
+    st.divider()
+    
+    # Metrics
     col1, col2, col3 = st.columns(3)
     col1.metric("Total Droplets (Simulated)", f"{n_trimmed:,}")
     col2.metric("Occupied Droplets", f"{N_occupied:,} ({pct:.2f}%)")
@@ -1033,10 +1041,9 @@ def main():
     (bin_sums, bin_counts, final_biomass, t_eval, bin_edges,
      a_eff_bin_sums, density_bin_sums, a_bound_bin_sums, net_rate_bin_sums, s_bin_sums) = data["sim_output"]
 
-    st.divider()
-
     st.subheader("Results Analysis")
 
+    # 4. Dropdown Menu (Now visually below the Run Button)
     plot_options = [
         "Population Dynamics",
         "Droplet Distribution",
@@ -1111,4 +1118,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
