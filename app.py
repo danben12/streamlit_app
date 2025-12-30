@@ -482,6 +482,7 @@ def solve_individual_droplet(idx, single_vol, single_biomass, t_eval, params, bi
     return (idx, final_c[0], local_bin_sums, local_bin_counts, 
             local_a_eff, local_density, local_a_bound, local_net_rate, local_s_sums)
 
+
 def _compute_simulation_core(vols, initial_biomass, total_vols_range, params):
     t_eval = np.arange(params['t_start'], params['t_end'] + params['dt'] / 100.0, params['dt'])
 
@@ -549,8 +550,11 @@ def _compute_simulation_core(vols, initial_biomass, total_vols_range, params):
     return (total_bin_sums, total_bin_counts, final_counts_all, t_eval, bin_edges,
             total_a_eff, total_density, total_a_bound, total_net_rate, total_s_sums)
 
+
 def run_simulation(vols, initial_biomass, total_vols_range, params):
+    # Wrapper function
     return _compute_simulation_core(vols, initial_biomass, total_vols_range, params)
+
 
 # ==========================================
 # 6. PLOTTING FUNCTIONS
@@ -558,6 +562,7 @@ def run_simulation(vols, initial_biomass, total_vols_range, params):
 
 def int_to_superscript(n):
     return str(n).translate(str.maketrans('0123456789-', '⁰¹²³⁴⁵⁶⁷⁸⁹⁻'))
+
 
 def plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges):
     p = figure(x_axis_label="Time (h)", y_axis_label="Normalized Biomass (B/B₀)",
@@ -612,6 +617,7 @@ def plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges):
     p.add_layout(legend, 'right')
     return p
 
+
 def plot_net_growth_dynamics(t_eval, net_rate_bin_sums, bin_counts, bin_edges):
     p = figure(x_axis_label="Time (h)", y_axis_label="Net Growth Rate (μ - λ) [1/h]",
                height=800, width=1200, tools="pan,wheel_zoom,reset,save",
@@ -644,6 +650,7 @@ def plot_net_growth_dynamics(t_eval, net_rate_bin_sums, bin_counts, bin_edges):
     p.add_layout(legend, 'right')
 
     return p
+
 
 def plot_a_eff_dynamics(t_eval, a_eff_bin_sums, bin_counts, bin_edges, params):
     title_text = "Effective Antibiotic Conc. (Bound/Density)"
@@ -698,6 +705,7 @@ def plot_a_eff_dynamics(t_eval, a_eff_bin_sums, bin_counts, bin_edges, params):
 
     return p
 
+
 def plot_density_dynamics(t_eval, density_bin_sums, bin_counts, bin_edges):
     p = figure(x_axis_label="Time (h)", y_axis_label="Cell Density (Biomass/Volume)",
                height=800, width=1200, tools="pan,wheel_zoom,reset,save",
@@ -713,6 +721,7 @@ def plot_density_dynamics(t_eval, density_bin_sums, bin_counts, bin_edges):
     for i in range(len(bin_counts)):
         if bin_counts[i] > 0:
             mean_vals = density_bin_sums[i, :] / bin_counts[i]
+            # Log scale handling for zero
             mean_vals = np.where(mean_vals <= 0, np.nan, mean_vals)
 
             low_exp = int(np.log10(bin_edges[i]))
@@ -726,6 +735,7 @@ def plot_density_dynamics(t_eval, density_bin_sums, bin_counts, bin_edges):
     legend = Legend(items=legend_items, location="top_right", click_policy="hide", title="Volume Bins")
     p.add_layout(legend, 'right')
     return p
+
 
 def plot_substrate_dynamics(t_eval, s_bin_sums, bin_counts, bin_edges):
     p = figure(x_axis_label="Time (h)", y_axis_label="Substrate Concentration (S)",
@@ -755,6 +765,7 @@ def plot_substrate_dynamics(t_eval, s_bin_sums, bin_counts, bin_edges):
     p.add_layout(legend, 'right')
     return p
 
+
 def plot_abound_dynamics(t_eval, abound_bin_sums, bin_counts, bin_edges):
     p = figure(x_axis_label="Time (h)", y_axis_label="Bound Antibiotic (Molecules/Droplet)",
                height=800, width=1200, tools="pan,wheel_zoom,reset,save",
@@ -783,6 +794,7 @@ def plot_abound_dynamics(t_eval, abound_bin_sums, bin_counts, bin_edges):
     p.add_layout(legend, 'right')
     return p
 
+
 def plot_distribution(total_vols, occupied_vols):
     min_exp = int(np.floor(np.log10(total_vols.min())))
     max_exp = int(np.ceil(np.log10(total_vols.max())))
@@ -801,6 +813,7 @@ def plot_distribution(total_vols, occupied_vols):
            fill_color="#718dbf", line_color="white", alpha=0.6, legend_label="Occupied Droplets")
     p.legend.location = "top_right"
     return p
+
 
 def plot_initial_density_vc(df_density, vc_val, theoretical_density):
     source = ColumnDataSource(df_density)
@@ -830,6 +843,7 @@ def plot_initial_density_vc(df_density, vc_val, theoretical_density):
     ], location='top_right')
     p.add_layout(legend)
     return p
+
 
 def plot_fold_change(vols, initial_biomass, final_biomass, vc_val):
     min_fc = -6.0
@@ -890,6 +904,7 @@ def plot_fold_change(vols, initial_biomass, final_biomass, vc_val):
 
     return p, df_fc
 
+
 def plot_n0_vs_volume(df, Vc):
     plot_df = df.copy()
     plot_df['DropletID'] = plot_df.index
@@ -945,9 +960,11 @@ def plot_n0_vs_volume(df, Vc):
 
     return column(p, stats_div)
 
+
 def convert_df(df):
     """Helper to convert DF to CSV for download"""
     return df.to_csv(index=False).encode('utf-8')
+
 
 # ==========================================
 # 7. MAIN EXECUTION
@@ -965,10 +982,14 @@ def main():
     if "trigger_run" not in st.session_state: st.session_state.trigger_run = False
     if "selected_plot" not in st.session_state: st.session_state.selected_plot = PLOT_OPTIONS[0]
 
-    # 1. Render Sidebar
+    # --- CRITICAL FIX: CHECK FOR HISTORY SELECTION *BEFORE* SIDEBAR RENDERS ---
+    # Not strictly needed with the callback method, but good practice to keep state clean.
+
+    # 1. Render Sidebar (Now using potentially updated state)
     params = render_sidebar()
 
-    # 2. Display Metrics
+    # 2. Display Metrics (Only if data exists)
+    # We display metrics at the top so they are always visible
     if st.session_state.sim_results is not None:
         data = st.session_state.sim_results
         n_trimmed = data["n_trimmed"]
@@ -979,21 +1000,27 @@ def main():
         col1.metric("Total Droplets", f"{n_trimmed:,}")
         col2.metric("Occupied", f"{N_occupied:,} ({pct:.2f}%)")
         col3.metric("Antibiotic Conc", f"{data['params']['A0']}") 
+        
         st.divider()
 
     # 3. Header and Controls
     st.subheader("Results Analysis")
+
+    # Layout: Small Button on the left, Dropdown below it (or next to it, but you asked for below header)
+    # We will put the button first, then the dropdown, as requested.
+    
     col_btn, _ = st.columns([2,6])
     with col_btn:
         manual_run = st.button("Run Simulation", type="primary")
     
     # 4. Logic: Run Simulation
+    # Runs if manual button, OR triggered from history selection, OR first run
     should_run = manual_run or st.session_state.trigger_run or st.session_state.sim_results is None
 
     if should_run:
-        # RESET PLOT SELECTION ON NEW RUN
-        st.session_state.selected_plot = PLOT_OPTIONS[0]
-        st.session_state.trigger_run = False 
+        # DO NOT RESET PLOT SELECTION HERE
+        # We rely on session_state persistence for the dropdown
+        st.session_state.trigger_run = False # Reset trigger
         
         with st.spinner("Running simulation..."):
             vols, counts, initial_biomass, total_vols = generate_population(
