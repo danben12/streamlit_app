@@ -119,7 +119,6 @@ def render_sidebar():
 
     # --- Model Selection ---
     model_choices = ["Effective Concentration", "Linear Lysis Rate", "Combined Model"]
-    # Key added to allow state updates
     params['model'] = st.sidebar.selectbox("Select Model", model_choices, key='model_select')
 
     # --- Time Settings ---
@@ -138,8 +137,6 @@ def render_sidebar():
     params['std_log10'] = st.sidebar.number_input("Std Dev Log10", 0.1, 3.0, 1.2, 0.1, key='std_log10')
     params['n_samples'] = st.sidebar.number_input("N Samples (Droplets)", 1000, 100000, 17000, 1000, key='n_samples')
     
-    # Logic to handle conc_exp slider affecting concentration and vice versa if needed
-    # For now, simplistic approach:
     params['conc_exp'] = st.sidebar.slider("Concentration Exp (10^x)", -7.0, -1.0, -4.3, 0.1, key='conc_exp')
     params['concentration'] = 10 ** params['conc_exp']
 
@@ -164,8 +161,6 @@ def render_sidebar():
             params['K_on'] = st.number_input("K_on", value=750.0, key='K_on')
             params['K_off'] = st.number_input("K_off", value=0.01, key='K_off')
             params['K_D'] = st.number_input("K_D", value=12000.0, key='K_D')
-            # Hill coef might appear in multiple blocks, need unique key strategy or reuse carefully. 
-            # Streamlit warns if same key used. We use one input for n_hill usually.
             if 'n_hill' not in st.session_state: st.session_state.n_hill = 20.0
             params['n_hill'] = st.number_input("Hill coeff (n)", value=st.session_state.n_hill, key='n_hill_1')
 
@@ -178,12 +173,11 @@ def render_sidebar():
 
         if params['model'] == "Linear Lysis Rate":
             params['K_A0'] = st.number_input("K_A0", value=10.0, key='K_A0')
-            if 'n_hill_1' not in params: # Only show if not shown above (mutually exclusive usually)
+            if 'n_hill_1' not in params:
                  params['n_hill'] = st.number_input("Hill coeff (n)", value=20.0, key='n_hill_2')
             else:
-                 params['n_hill'] = params['n_hill'] # already set
+                 params['n_hill'] = params['n_hill']
 
-        # Consolidate n_hill from whichever widget was active
         if 'n_hill_1' in params: params['n_hill'] = params['n_hill_1']
         elif 'n_hill_2' in params: params['n_hill'] = params['n_hill_2']
 
@@ -870,10 +864,7 @@ def convert_df(df):
 def load_params_from_history(row):
     """
     Updates session state keys with values from the selected history row.
-    This effectively "loads" the settings back into the sidebar.
     """
-    # Keys mapping row columns to st.session_state keys
-    # Note: 'key' argument in widget creation defines st.session_state key
     mapping = {
         'model': 'model_select',
         't_start': 't_start', 't_end': 't_end', 'dt': 'dt',
@@ -882,30 +873,26 @@ def load_params_from_history(row):
         'mu_max': 'mu_max', 'Y': 'Y', 'S0': 'S0', 'Ks': 'Ks',
         'A0': 'A0',
         'K_on': 'K_on', 'K_off': 'K_off', 'K_D': 'K_D', 
-        'n_hill': 'n_hill_1', # We map to primary n_hill key
+        'n_hill': 'n_hill_1', 
         'lambda_max': 'lambda_max',
         'a': 'a', 'b': 'b', 'K_A0': 'K_A0'
     }
 
     for col, state_key in mapping.items():
         if col in row and row[col] is not None:
-            # Special handling for n_hill because we have 2 widgets for it
             if col == 'n_hill':
                 st.session_state['n_hill_1'] = row[col]
                 st.session_state['n_hill_2'] = row[col]
-                st.session_state['n_hill'] = row[col] # Manual sync
+                st.session_state['n_hill'] = row[col]
             else:
                 try:
-                    # Cast types if necessary (numpy types to python native)
                     val = row[col]
                     if isinstance(val, (np.integer, int)): val = int(val)
                     elif isinstance(val, (np.floating, float)): val = float(val)
-                    
                     st.session_state[state_key] = val
                 except Exception:
-                    pass # Ignore if key doesn't match exactly or type mismatch
+                    pass
     
-    # Trigger a rerun flag to auto-run simulation after loading
     st.session_state['trigger_run'] = True
 
 
@@ -919,7 +906,7 @@ def main():
     MEAN_PIXELS = 5.5
     STD_PIXELS = 1.0
 
-    # 1. Render Sidebar (Widgets are created here with keys)
+    # 1. Render Sidebar
     params = render_sidebar()
 
     # Initialize Session State
@@ -929,8 +916,10 @@ def main():
         st.session_state.run_history = []
     if "trigger_run" not in st.session_state:
         st.session_state.trigger_run = False
+    if "last_selection_ts" not in st.session_state:
+        st.session_state.last_selection_ts = None
 
-    # 2. Display Metrics (Only if data exists)
+    # 2. Display Metrics
     if st.session_state.sim_results is not None:
         data = st.session_state.sim_results
         n_trimmed = data["n_trimmed"]
@@ -965,11 +954,9 @@ def main():
     ]
     
     # 4. Logic: Run Simulation
-    # Run if manual click, OR if triggered by history load, OR if no results yet
     should_run = manual_run or st.session_state.trigger_run or st.session_state.sim_results is None
 
     if should_run:
-        # Reset trigger
         st.session_state.trigger_run = False
         
         with st.spinner("Running simulation..."):
@@ -996,12 +983,10 @@ def main():
                     vols, initial_biomass, (total_vols.min(), total_vols.max()), params
                 )
 
-                # --- UPDATE HISTORY ---
                 if sim_output:
                     row = {k: v for k, v in params.items() if isinstance(v, (int, float, str))}
                     row['Timestamp'] = datetime.now().strftime("%H:%M:%S")
                     
-                    # Set non-applicable params to None
                     model = params['model']
                     all_specifics = ['K_on', 'K_off', 'K_D', 'n_hill', 'lambda_max', 'a', 'b', 'K_A0']
                     
@@ -1018,7 +1003,6 @@ def main():
                         if key not in relevant:
                             row[key] = None 
 
-                    # Avoid duplicates: only add if different from last
                     if not st.session_state.run_history or row['Timestamp'] != st.session_state.run_history[0].get('Timestamp'):
                          st.session_state.run_history.insert(0, row)
                     
@@ -1037,13 +1021,10 @@ def main():
                 "sim_output": sim_output,
                 "params": params
             }
-            # Force refresh to update UI state if triggered from history
             st.rerun()
 
     # 5. Render Output Tabs
     data = st.session_state.sim_results
-
-    # TABS FOR VISUALIZATION VS HISTORY
     tab_viz, tab_hist = st.tabs(["📊 Visualization", "📜 Run History"])
 
     with tab_viz:
@@ -1112,49 +1093,44 @@ def main():
                         streamlit_bokeh(p_abound, use_container_width=True)
 
     with tab_hist:
-        st.subheader("Simulation History & Restore")
+        st.subheader("Simulation History")
+        st.info("👆 **Click on a row** in the table below to restore its parameters and rerun the simulation.")
         
         if st.session_state.run_history:
-            # Create a header row
-            history = st.session_state.run_history
-            keys = list(history[0].keys())
+            df_hist = pd.DataFrame(st.session_state.run_history)
             
-            # We want specific columns to show first
-            priority_cols = ['Timestamp', 'model']
-            other_cols = [k for k in keys if k not in priority_cols]
-            display_cols = priority_cols + other_cols
-            
-            # --- Render Header ---
-            cols = st.columns([1.5] + [1] * len(display_cols))
-            cols[0].markdown("**Action**") # First column for button
-            for idx, col_name in enumerate(display_cols):
-                cols[idx+1].markdown(f"**{col_name}**")
-            
-            st.markdown("---")
+            # Formatting
+            if 'Timestamp' in df_hist.columns:
+                cols_order = ['Timestamp', 'model']
+                other_cols = [c for c in df_hist.columns if c not in cols_order]
+                df_hist = df_hist[cols_order + other_cols]
 
-            # --- Render Rows with Buttons ---
-            for i, row in enumerate(history):
-                cols = st.columns([1.5] + [1] * len(display_cols))
+            # Use st.dataframe with selection enabled
+            selection = st.dataframe(
+                df_hist,
+                use_container_width=True,
+                hide_index=True,
+                on_select="rerun",
+                selection_mode="single-row"
+            )
+
+            # Handle Selection Event
+            if selection.selection.rows:
+                row_idx = selection.selection.rows[0]
+                selected_row = st.session_state.run_history[row_idx]
+                ts = selected_row.get('Timestamp')
                 
-                # Button Column
-                if cols[0].button("🔄 Rerun", key=f"rerun_{i}"):
-                    load_params_from_history(row)
+                # Prevent infinite loops by checking if selection changed
+                if ts != st.session_state.last_selection_ts:
+                    st.session_state.last_selection_ts = ts
+                    load_params_from_history(selected_row)
                     st.rerun()
-
-                # Data Columns
-                for idx, col_name in enumerate(display_cols):
-                    val = row.get(col_name)
-                    # Show '-' if None, else value
-                    display_val = str(val) if val is not None else "-"
-                    cols[idx+1].write(display_val)
-                    
-                st.markdown("<hr style='margin: 0.2em 0; opacity: 0.2'>", unsafe_allow_html=True)
-
-            if st.button("Clear History", type='secondary'):
+            
+            if st.button("Clear History", type="secondary"):
                 st.session_state.run_history = []
                 st.rerun()
         else:
-            st.info("Run a simulation to populate this list.")
+            st.warning("Run a simulation to populate the history table.")
 
 if __name__ == "__main__":
     main()
