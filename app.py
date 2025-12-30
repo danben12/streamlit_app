@@ -18,7 +18,6 @@ from numba import njit, prange
 # ==========================================
 # 0. GLOBAL CONSTANTS
 # ==========================================
-# Centralized list ensures the dropdown and logic never mismatch
 PLOT_OPTIONS = [
     "Population Dynamics",
     "Droplet Distribution",
@@ -139,65 +138,169 @@ def on_rerun_click():
             st.session_state.trigger_run = True
 
 # ==========================================
-# 4. UI COMPONENTS
+# 4. UI COMPONENTS (CORRECTED)
 # ==========================================
 
 def render_sidebar():
     st.sidebar.header("Simulation Settings")
     params = {}
 
-    params['model'] = st.sidebar.selectbox("Select Model", ["Effective Concentration", "Linear Lysis Rate", "Combined Model"], key='model_select')
+    params['model'] = st.sidebar.selectbox(
+        "Select Model", 
+        ["Effective Concentration", "Linear Lysis Rate", "Combined Model"], 
+        key='model_select'
+    )
 
     st.sidebar.subheader("Time Settings")
     col1, col2, col3 = st.sidebar.columns(3)
-    params['t_start'] = col1.number_input("Start (h)", value=0.0, step=1.0, key='t_start')
-    params['t_end'] = col2.number_input("End (h)", value=24.0, step=1.0, key='t_end')
-    params['dt'] = col3.number_input("Step (h)", value=1.0, min_value=0.01, step=0.5, key='dt')
+    
+    # We use st.session_state.get() for all 'value' arguments to avoid
+    # the "widget created with default value but set via Session State" error.
+    
+    params['t_start'] = col1.number_input(
+        "Start (h)", 
+        value=st.session_state.get('t_start', 0.0), 
+        step=1.0, 
+        key='t_start'
+    )
+    params['t_end'] = col2.number_input(
+        "End (h)", 
+        value=st.session_state.get('t_end', 24.0), 
+        step=1.0, 
+        key='t_end'
+    )
+    params['dt'] = col3.number_input(
+        "Step (h)", 
+        value=st.session_state.get('dt', 1.0), 
+        min_value=0.01, 
+        step=0.5, 
+        key='dt'
+    )
 
     st.sidebar.subheader("Population Generation")
-    params['mean_log10'] = st.sidebar.number_input("Mean Log10 Volume", 1.0, 8.0, 3.0, 0.1, key='mean_log10')
-    params['std_log10'] = st.sidebar.number_input("Std Dev Log10", 0.1, 3.0, 1.2, 0.1, key='std_log10')
-    params['n_samples'] = st.sidebar.number_input("N Samples (Droplets)", 1000, 100000, 17000, 1000, key='n_samples')
+    params['mean_log10'] = st.sidebar.number_input(
+        "Mean Log10 Volume", 
+        1.0, 8.0, 
+        st.session_state.get('mean_log10', 3.0), 
+        0.1, 
+        key='mean_log10'
+    )
+    params['std_log10'] = st.sidebar.number_input(
+        "Std Dev Log10", 
+        0.1, 3.0, 
+        st.session_state.get('std_log10', 1.2), 
+        0.1, 
+        key='std_log10'
+    )
+    params['n_samples'] = st.sidebar.number_input(
+        "N Samples (Droplets)", 
+        1000, 100000, 
+        st.session_state.get('n_samples', 17000), 
+        1000, 
+        key='n_samples'
+    )
     
-    params['conc_exp'] = st.sidebar.slider("Concentration Exp (10^x)", -7.0, -1.0, -4.3, 0.1, key='conc_exp')
+    params['conc_exp'] = st.sidebar.slider(
+        "Concentration Exp (10^x)", 
+        -7.0, -1.0, 
+        st.session_state.get('conc_exp', -4.3), 
+        0.1, 
+        key='conc_exp'
+    )
     params['concentration'] = 10 ** params['conc_exp']
 
     st.sidebar.subheader("Global Parameters")
     tab1, tab2 = st.sidebar.tabs(["Growth", "Drugs/Lysis"])
 
     with tab1:
-        params['mu_max'] = st.number_input("mu_max", value=0.7, key='mu_max')
-        params['Y'] = st.number_input("Yield (Y)", value=0.001, format="%.4f", key='Y')
-        params['S0'] = st.number_input("Initial S0", value=1.0, key='S0')
-        params['Ks'] = st.number_input("Ks", value=2.0, key='Ks')
+        params['mu_max'] = st.number_input(
+            "mu_max", 
+            value=st.session_state.get('mu_max', 0.7), 
+            key='mu_max'
+        )
+        params['Y'] = st.number_input(
+            "Yield (Y)", 
+            value=st.session_state.get('Y', 0.001), 
+            format="%.4f", 
+            key='Y'
+        )
+        params['S0'] = st.number_input(
+            "Initial S0", 
+            value=st.session_state.get('S0', 1.0), 
+            key='S0'
+        )
+        params['Ks'] = st.number_input(
+            "Ks", 
+            value=st.session_state.get('Ks', 2.0), 
+            key='Ks'
+        )
 
     with tab2:
-        params['A0'] = st.number_input("Initial Antibiotic (A0)", value=10.0, key='A0')
+        params['A0'] = st.number_input(
+            "Initial Antibiotic (A0)", 
+            value=st.session_state.get('A0', 10.0), 
+            key='A0'
+        )
         
         defaults = ['K_on', 'K_off', 'K_D', 'n_hill', 'lambda_max', 'a', 'b', 'K_A0']
         for key in defaults: params[key] = 0.0
 
         if params['model'] in ["Effective Concentration", "Combined Model"]:
-            params['K_on'] = st.number_input("K_on", value=750.0, key='K_on')
-            params['K_off'] = st.number_input("K_off", value=0.01, key='K_off')
-            params['K_D'] = st.number_input("K_D", value=12000.0, key='K_D')
+            params['K_on'] = st.number_input(
+                "K_on", 
+                value=st.session_state.get('K_on', 750.0), 
+                key='K_on'
+            )
+            params['K_off'] = st.number_input(
+                "K_off", 
+                value=st.session_state.get('K_off', 0.01), 
+                key='K_off'
+            )
+            params['K_D'] = st.number_input(
+                "K_D", 
+                value=st.session_state.get('K_D', 12000.0), 
+                key='K_D'
+            )
             if 'n_hill' not in st.session_state: st.session_state.n_hill = 20.0
-            params['n_hill'] = st.number_input("Hill coeff (n)", value=st.session_state.n_hill, key='n_hill_1')
+            
+            # Using 'n_hill_1' key for this input
+            params['n_hill'] = st.number_input(
+                "Hill coeff (n)", 
+                value=st.session_state.get('n_hill_1', st.session_state.n_hill), 
+                key='n_hill_1'
+            )
 
         if params['model'] == "Effective Concentration":
-            params['lambda_max'] = st.number_input("lambda_max", value=1.0, key='lambda_max')
+            params['lambda_max'] = st.number_input(
+                "lambda_max", 
+                value=st.session_state.get('lambda_max', 1.0), 
+                key='lambda_max'
+            )
 
         if params['model'] in ["Linear Lysis Rate", "Combined Model"]:
-            params['a'] = st.number_input("a (Growth Lysis)", value=3.0, key='a')
-            params['b'] = st.number_input("b (Base Lysis)", value=0.1, key='b')
+            params['a'] = st.number_input(
+                "a (Growth Lysis)", 
+                value=st.session_state.get('a', 3.0), 
+                key='a'
+            )
+            params['b'] = st.number_input(
+                "b (Base Lysis)", 
+                value=st.session_state.get('b', 0.1), 
+                key='b'
+            )
 
         if params['model'] == "Linear Lysis Rate":
-            params['K_A0'] = st.number_input("K_A0", value=10.0, key='K_A0')
-            if 'n_hill_1' not in params:
-                 params['n_hill'] = st.number_input("Hill coeff (n)", value=20.0, key='n_hill_2')
-            else:
-                 params['n_hill'] = params['n_hill']
+            params['K_A0'] = st.number_input(
+                "K_A0", 
+                value=st.session_state.get('K_A0', 10.0), 
+                key='K_A0'
+            )
+            
+            # Using 'n_hill_2' key for this input
+            val_n_hill = st.session_state.get('n_hill_2', 20.0)
+            params['n_hill'] = st.number_input("Hill coeff (n)", value=val_n_hill, key='n_hill_2')
 
+        # Logic to ensure the dictionary has the correct n_hill based on which widget was active
         if 'n_hill_1' in params: params['n_hill'] = params['n_hill_1']
         elif 'n_hill_2' in params: params['n_hill'] = params['n_hill_2']
 
@@ -302,10 +405,10 @@ def calculate_derived_metrics(sol_reshaped, vols, model_type_int, mu_max, Ks):
 
 @njit(cache=True, fastmath=True)
 def fast_accumulate_bins_serial(bin_sums, a_eff_bin_sums, density_bin_sums,
-                          a_bound_bin_sums, net_rate_bin_sums, s_bin_sums,
-                          bin_counts, bin_edges, vols,
-                          batch_blive_T, batch_a_eff_T, batch_density_T,
-                          batch_abound_T, batch_net_rate, batch_S_T):
+                                  a_bound_bin_sums, net_rate_bin_sums, s_bin_sums,
+                                  bin_counts, bin_edges, vols,
+                                  batch_blive_T, batch_a_eff_T, batch_density_T,
+                                  batch_abound_T, batch_net_rate, batch_S_T):
     n_droplets = len(vols)
     n_bins = len(bin_edges) - 1
     for i in range(n_droplets):
