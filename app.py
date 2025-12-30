@@ -939,6 +939,23 @@ def main():
                     row = {k: v for k, v in params.items() if isinstance(v, (int, float, str))}
                     row['Timestamp'] = datetime.now().strftime("%H:%M:%S")
                     
+                    # LOGIC TO SET NON-APPLICABLE PARAMS TO NONE (NAN)
+                    model = params['model']
+                    all_specifics = ['K_on', 'K_off', 'K_D', 'n_hill', 'lambda_max', 'a', 'b', 'K_A0']
+                    
+                    if model == "Effective Concentration":
+                        relevant = ['K_on', 'K_off', 'K_D', 'n_hill', 'lambda_max']
+                    elif model == "Linear Lysis Rate":
+                        relevant = ['a', 'b', 'K_A0', 'n_hill']
+                    elif model == "Combined Model":
+                        relevant = ['K_on', 'K_off', 'K_D', 'n_hill', 'a', 'b']
+                    else:
+                        relevant = []
+
+                    for key in all_specifics:
+                        if key not in relevant:
+                            row[key] = None # Will appear as empty/NaN in dataframe
+
                     st.session_state.run_history.insert(0, row)
                     if len(st.session_state.run_history) > 20:
                         st.session_state.run_history = st.session_state.run_history[:20]
