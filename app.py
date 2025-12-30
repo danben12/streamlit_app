@@ -520,7 +520,7 @@ def int_to_superscript(n):
 
 def plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges):
     p = figure(x_axis_label="Time (h)", y_axis_label="Normalized Biomass (B/B₀)",
-               height=600, width=1000, tools="pan,wheel_zoom,reset,save")
+               height=800, width=1200, tools="pan,wheel_zoom,reset,save")
 
     high_contrast_color_map = [cc.CET_D1[0], cc.CET_D1[80], cc.CET_D1[180], cc.CET_D1[230], cc.CET_D1[255]]
 
@@ -558,7 +558,7 @@ def plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges):
 
 def plot_net_growth_dynamics(t_eval, net_rate_bin_sums, bin_counts, bin_edges):
     p = figure(x_axis_label="Time (h)", y_axis_label="Net Growth Rate (μ - λ) [1/h]",
-               height=600, width=1000, tools="pan,wheel_zoom,reset,save",
+               height=800, width=1200, tools="pan,wheel_zoom,reset,save",
                title="Net Growth Rate (μ - λ) Dynamics")
 
     high_contrast_color_map = [cc.CET_D1[0], cc.CET_D1[80], cc.CET_D1[180], cc.CET_D1[230], cc.CET_D1[255]]
@@ -593,7 +593,7 @@ def plot_a_eff_dynamics(t_eval, a_eff_bin_sums, bin_counts, bin_edges, params):
         y_label = "Concentration (A0)"
 
     p = figure(x_axis_label="Time (h)", y_axis_label=y_label,
-               height=600, width=1000, tools="pan,wheel_zoom,reset,save",
+               height=800, width=1200, tools="pan,wheel_zoom,reset,save",
                title=title_text)
 
     high_contrast_color_map = [cc.CET_D1[0], cc.CET_D1[80], cc.CET_D1[180], cc.CET_D1[230], cc.CET_D1[255]]
@@ -633,7 +633,7 @@ def plot_a_eff_dynamics(t_eval, a_eff_bin_sums, bin_counts, bin_edges, params):
 
 def plot_density_dynamics(t_eval, density_bin_sums, bin_counts, bin_edges):
     p = figure(x_axis_label="Time (h)", y_axis_label="Cell Density (Biomass/Volume)",
-               height=600, width=1000, tools="pan,wheel_zoom,reset,save",
+               height=800, width=1200, tools="pan,wheel_zoom,reset,save",
                title="Average Cell Density over Time", y_axis_type='log')
 
     high_contrast_color_map = [cc.CET_D1[0], cc.CET_D1[80], cc.CET_D1[180], cc.CET_D1[230], cc.CET_D1[255]]
@@ -659,7 +659,7 @@ def plot_density_dynamics(t_eval, density_bin_sums, bin_counts, bin_edges):
 
 def plot_substrate_dynamics(t_eval, s_bin_sums, bin_counts, bin_edges):
     p = figure(x_axis_label="Time (h)", y_axis_label="Substrate Concentration (S)",
-               height=600, width=1000, tools="pan,wheel_zoom,reset,save",
+               height=800, width=1200, tools="pan,wheel_zoom,reset,save",
                title="Substrate Depletion over Time")
     high_contrast_color_map = [cc.CET_D1[0], cc.CET_D1[80], cc.CET_D1[180], cc.CET_D1[230], cc.CET_D1[255]]
     unique_bins = sum(1 for c in bin_counts if c > 0)
@@ -682,7 +682,7 @@ def plot_substrate_dynamics(t_eval, s_bin_sums, bin_counts, bin_edges):
 
 def plot_abound_dynamics(t_eval, abound_bin_sums, bin_counts, bin_edges):
     p = figure(x_axis_label="Time (h)", y_axis_label="Bound Antibiotic (Molecules/Droplet)",
-               height=600, width=1000, tools="pan,wheel_zoom,reset,save",
+               height=800, width=1200, tools="pan,wheel_zoom,reset,save",
                title="Average Bound Antibiotic (A_bound) over Time")
     high_contrast_color_map = [cc.CET_D1[0], cc.CET_D1[80], cc.CET_D1[180], cc.CET_D1[230], cc.CET_D1[255]]
     unique_bins = sum(1 for c in bin_counts if c > 0)
@@ -713,7 +713,7 @@ def plot_distribution(total_vols, occupied_vols):
     edges_linear = 10 ** edges_total
 
     p = figure(x_axis_label="Volume", y_axis_label="Frequency",
-               x_axis_type="log", height=600, width=1000, tools="pan,wheel_zoom,reset,save")
+               x_axis_type="log", height=800, width=1200, tools="pan,wheel_zoom,reset,save")
 
     p.quad(top=hist_total, bottom=0, left=edges_linear[:-1], right=edges_linear[1:],
            fill_color="grey", line_color="white", alpha=0.5, legend_label="Total Droplets")
@@ -727,7 +727,7 @@ def plot_initial_density_vc(df_density, vc_val, theoretical_density):
     source = ColumnDataSource(df_density)
     p = figure(x_axis_type='log', y_axis_type='log',
                x_axis_label='Volume (μm³)', y_axis_label='Initial Density (biomass/μm³)',
-               width=1000, height=600, output_backend="webgl", tools="pan,wheel_zoom,reset,save")
+               width=1200, height=800, output_backend="webgl", tools="pan,wheel_zoom,reset,save")
 
     p.xaxis.axis_label_text_font_size = "16pt"
     p.yaxis.axis_label_text_font_size = "16pt"
@@ -776,7 +776,7 @@ def plot_fold_change(vols, initial_biomass, final_biomass, vc_val):
 
     p = figure(x_axis_type='log', y_axis_type='linear',
                x_axis_label='Volume (μm³)', y_axis_label='Log2 biomass Fold Change',
-               width=1000, height=600, y_range=(-7, 9), output_backend="webgl", tools="pan,wheel_zoom,reset,save")
+               width=1200, height=800, y_range=(-7, 9), output_backend="webgl", tools="pan,wheel_zoom,reset,save")
 
     p.xaxis.axis_label_text_font_size = "16pt"
     p.yaxis.axis_label_text_font_size = "16pt"
@@ -813,7 +813,7 @@ def plot_n0_vs_volume(df, Vc):
     source = ColumnDataSource(plot_df)
     p = figure(x_axis_type='log', y_axis_type='log',
                x_axis_label='Volume (μm³)', y_axis_label='Initial Biomass',
-               output_backend="webgl", width=1000, height=600,
+               output_backend="webgl", width=1200, height=800,
                tools="pan,wheel_zoom,reset,save")
 
     p.xaxis.axis_label_text_font_size = "16pt"
