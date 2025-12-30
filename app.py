@@ -16,6 +16,23 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from numba import njit, prange
 
 # ==========================================
+# 0. GLOBAL CONSTANTS
+# ==========================================
+# Defining these here ensures the dropdown and the logic always match perfectly.
+PLOT_OPTIONS = [
+    "Population Dynamics",
+    "Droplet Distribution",
+    "Initial Density & Vc",
+    "Fold Change",
+    "N0 vs Volume",
+    "Net Growth Rate (μ - λ)",
+    "Substrate Dynamics",
+    "Antibiotic Dynamics",
+    "Density Dynamics",
+    "Bound Antibiotic"
+]
+
+# ==========================================
 # 1. PAGE CONFIG
 # ==========================================
 
@@ -30,51 +47,77 @@ def configure_page():
 @njit(cache=True, fastmath=True, nogil=True)
 def vec_effective_concentration(y_flat, t, N, V, mu_max, Ks, Y, K_on, K_off, lambda_max, K_D, n):
     y = y_flat.reshape((N, 5))
-    A_free, A_bound, B_live, _, S = y[:, 0], y[:, 1], y[:, 2], y[:, 3], y[:, 4]
+    A_free = y[:, 0]
+    A_bound = y[:, 1]
+    B_live = y[:, 2]
+    S = y[:, 4]
+
     density = B_live / V
     A_eff = A_bound / np.maximum(density, 1e-12)
     mu = mu_max * S / (Ks + S)
+
     A_eff_n = np.power(A_eff, n)
-    hill_term = A_eff_n / (K_D ** n + A_eff_n + 1e-12)
+    K_D_n = K_D ** n
+    hill_term = A_eff_n / (K_D_n + A_eff_n + 1e-12)
     lambda_D = lambda_max * hill_term
+
     dB_live_dt = (mu - lambda_D) * B_live
     dB_dead_dt = lambda_D * B_live
     dS_dt = - (1.0 / Y) * mu * density
+
     dA_free_dt = -K_on * A_free * density + K_off * A_bound + lambda_D * A_bound
     dA_bound_dt = K_on * A_free * density - K_off * A_bound - lambda_D * A_bound
+
     dY = np.stack((dA_free_dt, dA_bound_dt, dB_live_dt, dB_dead_dt, dS_dt), axis=1)
     return dY.flatten()
 
 @njit(cache=True, fastmath=True, nogil=True)
 def vec_linear_lysis(y_flat, t, N, V, A0_vec, mu_max, Ks, Y, a, b, K_A0, n):
     y = y_flat.reshape((N, 3))
-    B_live, _, S = y[:, 0], y[:, 1], y[:, 2]
+    B_live = y[:, 0]
+    S = y[:, 2]
+
     density = B_live / V
     mu = mu_max * S / (Ks + S)
+
     A0_n = np.power(A0_vec, n)
-    term_A0 = A0_n / (K_A0 ** n + A0_n + 1e-12)
+    K_A0_n = K_A0 ** n
+    term_A0 = A0_n / (K_A0_n + A0_n + 1e-12)
+
     lambda_D = a * term_A0 * mu + b
+
     dB_live_dt = (mu - lambda_D) * B_live
     dB_dead_dt = lambda_D * B_live
     dS_dt = - (1.0 / Y) * mu * density
+
     dY = np.stack((dB_live_dt, dB_dead_dt, dS_dt), axis=1)
     return dY.flatten()
 
 @njit(cache=True, fastmath=True, nogil=True)
 def vec_combined_model(y_flat, t, N, V, mu_max, Ks, Y, K_on, K_off, K_D, n, a, b):
     y = y_flat.reshape((N, 5))
-    A_free, A_bound, B_live, _, S = y[:, 0], y[:, 1], y[:, 2], y[:, 3], y[:, 4]
+    A_free = y[:, 0]
+    A_bound = y[:, 1]
+    B_live = y[:, 2]
+    S = y[:, 4]
+
     density = B_live / V
     A_eff = A_bound / np.maximum(density, 1e-12)
     mu = mu_max * S / (Ks + S)
+
     A_eff_n = np.power(A_eff, n)
-    hill_term = A_eff_n / (K_D ** n + A_eff_n + 1e-12)
+    K_D_n = K_D ** n
+    hill_term = A_eff_n / (K_D_n + A_eff_n + 1e-12)
+
     lambda_D = a * hill_term * mu + b
+
     dB_live_dt = (mu - lambda_D) * B_live
     dB_dead_dt = lambda_D * B_live
     dS_dt = - (1.0 / Y) * mu * density
+
     dA_free_dt = -K_on * A_free * density + K_off * A_bound + lambda_D * A_bound
     dA_bound_dt = K_on * A_free * density - K_off * A_bound - lambda_D * A_bound
+
     dY = np.stack((dA_free_dt, dA_bound_dt, dB_live_dt, dB_dead_dt, dS_dt), axis=1)
     return dY.flatten()
 
@@ -114,6 +157,7 @@ def load_params_from_history(row):
 
 def on_rerun_click():
     """Callback for Rerun button"""
+    # Check if anything is selected in the dataframe
     if "history_table" in st.session_state and st.session_state["history_table"]["selection"]["rows"]:
         idx = st.session_state["history_table"]["selection"]["rows"][0]
         if idx < len(st.session_state.run_history):
@@ -782,12 +826,6 @@ def main():
     col_btn, _ = st.columns([2,6])
     with col_btn:
         manual_run = st.button("Run Simulation", type="primary")
-
-    plot_options = [
-        "Population Dynamics", "Droplet Distribution", "Initial Density & Vc",
-        "Fold Change", "N0 vs Volume", "Net Growth Rate (μ - λ)",
-        "Substrate Dynamics", "Antibiotic Dynamics", "Density Dynamics", "Bound Antibiotic"
-    ]
     
     # 4. Logic: Run Simulation
     should_run = manual_run or st.session_state.trigger_run or st.session_state.sim_results is None
@@ -846,8 +884,8 @@ def main():
     tab_viz, tab_hist = st.tabs(["📊 Visualization", "📜 Run History"])
 
     with tab_viz:
-        # Move selectbox OUTSIDE conditional to fix reset issue
-        selected_plot = st.selectbox("Select Figure to Display:", plot_options)
+        # Important: Widget is OUTSIDE the data conditional to persist state
+        selected_plot = st.selectbox("Select Figure to Display:", PLOT_OPTIONS, key="fig_select_box")
 
         if data is None or data["N_occupied"] == 0:
             st.error("No occupied droplets found. Try increasing Concentration or Mean Volume.")
@@ -856,26 +894,27 @@ def main():
              a_eff_bin_sums, density_bin_sums, a_bound_bin_sums, net_rate_bin_sums, s_bin_sums) = data["sim_output"]
 
             with st.container():
-                if selected_plot == "Population Dynamics":
+                # Use Global Constants for robust matching
+                if selected_plot == PLOT_OPTIONS[0]: # Population Dynamics
                     p = plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges)
-                elif selected_plot == "Droplet Distribution":
+                elif selected_plot == PLOT_OPTIONS[1]: # Droplet Distribution
                     p = plot_distribution(data["total_vols"], data["vols"])
-                elif selected_plot == "Initial Density & Vc":
+                elif selected_plot == PLOT_OPTIONS[2]: # Initial Density & Vc
                     p = plot_initial_density_vc(data["df_density"], data["vc_val"], data["params"]['concentration'])
-                elif selected_plot == "Fold Change":
+                elif selected_plot == PLOT_OPTIONS[3]: # Fold Change
                     p, df_fc = plot_fold_change(data["vols"], data["initial_biomass"], final_biomass, data["vc_val"])
                     st.download_button("Download CSV", data=convert_df(df_fc), file_name="fold_change_data.csv", mime="text/csv")
-                elif selected_plot == "N0 vs Volume":
+                elif selected_plot == PLOT_OPTIONS[4]: # N0 vs Volume
                     p = plot_n0_vs_volume(data["df_density"], data["vc_val"])
-                elif selected_plot == "Net Growth Rate (μ - λ)":
+                elif selected_plot == PLOT_OPTIONS[5]: # Net Growth Rate (μ - λ)
                     p = plot_net_growth_dynamics(t_eval, net_rate_bin_sums, bin_counts, bin_edges)
-                elif selected_plot == "Substrate Dynamics":
+                elif selected_plot == PLOT_OPTIONS[6]: # Substrate Dynamics
                     p = plot_substrate_dynamics(t_eval, s_bin_sums, bin_counts, bin_edges)
-                elif selected_plot == "Antibiotic Dynamics":
+                elif selected_plot == PLOT_OPTIONS[7]: # Antibiotic Dynamics
                     p = plot_a_eff_dynamics(t_eval, a_eff_bin_sums, bin_counts, bin_edges, data["params"])
-                elif selected_plot == "Density Dynamics":
+                elif selected_plot == PLOT_OPTIONS[8]: # Density Dynamics
                     p = plot_density_dynamics(t_eval, density_bin_sums, bin_counts, bin_edges)
-                elif selected_plot == "Bound Antibiotic":
+                elif selected_plot == PLOT_OPTIONS[9]: # Bound Antibiotic
                     if data["params"]['model'] == "Linear Lysis Rate":
                         st.warning("This model does not simulate binding kinetics.")
                         p = None
