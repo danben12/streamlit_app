@@ -13,8 +13,6 @@ from bokeh.models import Div
 import time
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
-
-# --- NUMBA IMPORTS ---
 from numba import njit, prange
 
 # ==========================================
@@ -26,7 +24,7 @@ def configure_page():
     st.title("Growth - Lysis Model simulation")
 
 # ==========================================
-# 2. ODE MATH MODELS (OPTIMIZED)
+# 2. ODE MATH MODELS
 # ==========================================
 
 @njit(cache=True, fastmath=True, nogil=True)
@@ -36,49 +34,37 @@ def vec_effective_concentration(y_flat, t, N, V, mu_max, Ks, Y, K_on, K_off, lam
     A_bound = y[:, 1]
     B_live = y[:, 2]
     S = y[:, 4]
-
     density = B_live / V
     A_eff = A_bound / np.maximum(density, 1e-12)
     mu = mu_max * S / (Ks + S)
-
     A_eff_n = np.power(A_eff, n)
     K_D_n = K_D ** n
     hill_term = A_eff_n / (K_D_n + A_eff_n + 1e-12)
     lambda_D = lambda_max * hill_term
-
     dB_live_dt = (mu - lambda_D) * B_live
     dB_dead_dt = lambda_D * B_live
     dS_dt = - (1.0 / Y) * mu * density
-
     dA_free_dt = -K_on * A_free * density + K_off * A_bound + lambda_D * A_bound
     dA_bound_dt = K_on * A_free * density - K_off * A_bound - lambda_D * A_bound
-
     dY = np.stack((dA_free_dt, dA_bound_dt, dB_live_dt, dB_dead_dt, dS_dt), axis=1)
     return dY.flatten()
-
 
 @njit(cache=True, fastmath=True, nogil=True)
 def vec_linear_lysis(y_flat, t, N, V, A0_vec, mu_max, Ks, Y, a, b, K_A0, n):
     y = y_flat.reshape((N, 3))
     B_live = y[:, 0]
     S = y[:, 2]
-
     density = B_live / V
     mu = mu_max * S / (Ks + S)
-
     A0_n = np.power(A0_vec, n)
     K_A0_n = K_A0 ** n
     term_A0 = A0_n / (K_A0_n + A0_n + 1e-12)
-
     lambda_D = a * term_A0 * mu + b
-
     dB_live_dt = (mu - lambda_D) * B_live
     dB_dead_dt = lambda_D * B_live
     dS_dt = - (1.0 / Y) * mu * density
-
     dY = np.stack((dB_live_dt, dB_dead_dt, dS_dt), axis=1)
     return dY.flatten()
-
 
 @njit(cache=True, fastmath=True, nogil=True)
 def vec_combined_model(y_flat, t, N, V, mu_max, Ks, Y, K_on, K_off, K_D, n, a, b):
@@ -87,30 +73,62 @@ def vec_combined_model(y_flat, t, N, V, mu_max, Ks, Y, K_on, K_off, K_D, n, a, b
     A_bound = y[:, 1]
     B_live = y[:, 2]
     S = y[:, 4]
-
     density = B_live / V
     A_eff = A_bound / np.maximum(density, 1e-12)
     mu = mu_max * S / (Ks + S)
-
     A_eff_n = np.power(A_eff, n)
     K_D_n = K_D ** n
     hill_term = A_eff_n / (K_D_n + A_eff_n + 1e-12)
-
     lambda_D = a * hill_term * mu + b
-
     dB_live_dt = (mu - lambda_D) * B_live
     dB_dead_dt = lambda_D * B_live
     dS_dt = - (1.0 / Y) * mu * density
-
     dA_free_dt = -K_on * A_free * density + K_off * A_bound + lambda_D * A_bound
     dA_bound_dt = K_on * A_free * density - K_off * A_bound - lambda_D * A_bound
-
     dY = np.stack((dA_free_dt, dA_bound_dt, dB_live_dt, dB_dead_dt, dS_dt), axis=1)
     return dY.flatten()
 
+# ==========================================
+# 3. HELPER: LOAD HISTORY
+# ==========================================
+def load_params_from_history(row):
+    """
+    Updates session state keys with values from the selected history row.
+    """
+    mapping = {
+        'model': 'model_select',
+        't_start': 't_start', 't_end': 't_end', 'dt': 'dt',
+        'mean_log10': 'mean_log10', 'std_log10': 'std_log10', 'n_samples': 'n_samples',
+        'conc_exp': 'conc_exp',
+        'mu_max': 'mu_max', 'Y': 'Y', 'S0': 'S0', 'Ks': 'Ks',
+        'A0': 'A0',
+        'K_on': 'K_on', 'K_off': 'K_off', 'K_D': 'K_D', 
+        'n_hill': 'n_hill_1', 
+        'lambda_max': 'lambda_max',
+        'a': 'a', 'b': 'b', 'K_A0': 'K_A0'
+    }
+
+    for col, state_key in mapping.items():
+        if col in row and row[col] is not None:
+            # Special handling for n_hill because we have 2 widgets for it
+            if col == 'n_hill':
+                st.session_state['n_hill_1'] = row[col]
+                st.session_state['n_hill_2'] = row[col]
+                st.session_state['n_hill'] = row[col]
+            else:
+                try:
+                    val = row[col]
+                    # Ensure types match what widgets expect
+                    if isinstance(val, (np.integer, int)): val = int(val)
+                    elif isinstance(val, (np.floating, float)): val = float(val)
+                    st.session_state[state_key] = val
+                except Exception:
+                    pass
+    
+    st.session_state['trigger_run'] = True
 
 # ==========================================
-# 3. UI COMPONENTS (SIDEBAR WITH FORM)
+# 4. UI COMPONENTS
 # ==========================================
 
 def render_sidebar():
@@ -184,7 +202,7 @@ def render_sidebar():
     return params
 
 # ==========================================
-# 4. CORE LOGIC & CALCULATION FUNCTIONS
+# 5. CORE LOGIC
 # ==========================================
 
 @njit(cache=True, parallel=True, fastmath=True)
@@ -193,17 +211,13 @@ def _generate_population_fast(n, mean, std, conc, mean_pix, std_pix):
     volume_data = 10 ** log_data
     mask_vol = (volume_data >= 1000) & (volume_data <= 1e8)
     trimmed_vol = volume_data[mask_vol]
-
     lambdas = trimmed_vol * conc
     cell_counts = np.zeros(len(lambdas), dtype=np.int64)
-
     for i in prange(len(lambdas)):
         cell_counts[i] = np.random.poisson(lambdas[i])
-
     occupied_mask = cell_counts > 0
     final_vols = trimmed_vol[occupied_mask].copy()
     final_counts = cell_counts[occupied_mask].copy()
-
     base_biomass = final_counts * mean_pix
     noise_base = np.random.normal(0.0, 1.0, len(final_counts))
     noise_scale = np.sqrt(final_counts) * std_pix
@@ -211,82 +225,62 @@ def _generate_population_fast(n, mean, std, conc, mean_pix, std_pix):
     raw_biomass = base_biomass + noise
     final_biomass = np.round(raw_biomass)
     final_biomass = np.maximum(final_biomass, 1.0)
-
     return final_vols, final_counts, final_biomass, trimmed_vol
 
 @st.cache_data(show_spinner="Generating population...")
 def generate_population(mean, std, n, conc, mean_pix, std_pix):
     return _generate_population_fast(n, mean, std, conc, mean_pix, std_pix)
 
-
 def calculate_vc_and_density(vols, biomass, theoretical_conc, mean_pix):
-    if len(vols) == 0:
-        return pd.DataFrame(), 0.0
-    
+    if len(vols) == 0: return pd.DataFrame(), 0.0
     effective_count = biomass / mean_pix
     df = pd.DataFrame({'Volume': vols, 'Biomass': biomass, 'Count': effective_count})
     df['InitialDensity'] = df['Count'] / df['Volume']
     df = df.sort_values(by='Volume').reset_index(drop=True)
-
     log_density = np.log10(df['InitialDensity'])
     df['RollingLogMean'] = log_density.rolling(window=100, min_periods=1).mean()
     df['RollingMeanDensity'] = 10 ** df['RollingLogMean']
-
     convergence_window = 2
     tolerance = 0.05
     differences = np.abs(1 - (df['RollingMeanDensity'] / theoretical_conc))
-
     rolling_diff = differences.rolling(window=convergence_window).mean()
     met_conditions = np.where(rolling_diff <= tolerance)[0]
-    
-    if len(met_conditions) > 0:
-        closest_index = met_conditions[0]
-    else:
-        closest_index = differences.idxmin()
-
+    if len(met_conditions) > 0: closest_index = met_conditions[0]
+    else: closest_index = differences.idxmin()
     vc_val = df.loc[closest_index, 'Volume']
     return df, vc_val
-
 
 @njit(cache=True, fastmath=True)
 def calculate_batch_lambda(sol_reshaped, t_eval, vols, model_type_int,
                            mu_max, Ks, K_D, n_hill, lambda_max, A0, K_A0, a, b):
-    
     if model_type_int == 1:
         S = sol_reshaped[:, :, 2]
     else:
         A_bound = sol_reshaped[:, :, 1]
         B_live = sol_reshaped[:, :, 2]
         S = sol_reshaped[:, :, 4]
-
     density = B_live / vols
     mu_mat = mu_max * S / (Ks + S)
-
     if model_type_int == 0:
         A_eff = A_bound / np.maximum(density, 1e-12)
         A_eff_n = np.power(A_eff, n_hill)
         K_D_n = K_D ** n_hill
         hill = A_eff_n / (K_D_n + A_eff_n + 1e-12)
         lambda_matrix = lambda_max * hill
-
     elif model_type_int == 1:
         A0_n = np.power(A0, n_hill)
         K_A0_n = K_A0 ** n_hill
         term_A0 = A0_n / (K_A0_n + A0_n + 1e-12)
         lambda_matrix = a * term_A0 * mu_mat + b
-
     elif model_type_int == 2:
         A_eff = A_bound / np.maximum(density, 1e-12)
         A_eff_n = np.power(A_eff, n_hill)
         K_D_n = K_D ** n_hill
         hill = A_eff_n / (K_D_n + A_eff_n + 1e-12)
         lambda_matrix = a * hill * mu_mat + b
-    
     else:
         lambda_matrix = np.zeros_like(mu_mat)
-
     return lambda_matrix
-
 
 @njit(cache=True, fastmath=True)
 def calculate_derived_metrics(sol_reshaped, vols, model_type_int, mu_max, Ks):
@@ -298,18 +292,11 @@ def calculate_derived_metrics(sol_reshaped, vols, model_type_int, mu_max, Ks):
         A_bound = sol_reshaped[:, :, 1]
         B_live = sol_reshaped[:, :, 2]
         S = sol_reshaped[:, :, 4]
-
     density = B_live / vols
-
-    if model_type_int == 1:
-        A_eff = np.zeros_like(density)
-    else:
-        A_eff = A_bound / np.maximum(density, 1e-12)
-
+    if model_type_int == 1: A_eff = np.zeros_like(density)
+    else: A_eff = A_bound / np.maximum(density, 1e-12)
     mu_mat = mu_max * S / (Ks + S)
-
     return A_eff, mu_mat, density, A_bound, B_live, S
-
 
 @njit(cache=True, fastmath=True)
 def fast_accumulate_bins_serial(bin_sums, a_eff_bin_sums, density_bin_sums,
@@ -319,7 +306,6 @@ def fast_accumulate_bins_serial(bin_sums, a_eff_bin_sums, density_bin_sums,
                           batch_abound_T, batch_net_rate, batch_S_T):
     n_droplets = len(vols)
     n_bins = len(bin_edges) - 1
-
     for i in range(n_droplets):
         vol = vols[i]
         bin_idx = -1
@@ -327,7 +313,6 @@ def fast_accumulate_bins_serial(bin_sums, a_eff_bin_sums, density_bin_sums,
             if vol >= bin_edges[b] and vol < bin_edges[b + 1]:
                 bin_idx = b
                 break
-
         if bin_idx != -1:
             bin_sums[bin_idx, :] += batch_blive_T[i, :]
             a_eff_bin_sums[bin_idx, :] += batch_a_eff_T[i, :]
@@ -337,14 +322,9 @@ def fast_accumulate_bins_serial(bin_sums, a_eff_bin_sums, density_bin_sums,
             s_bin_sums[bin_idx, :] += batch_S_T[i, :]
             bin_counts[bin_idx] += 1
 
-# ==============================================================================
-# PARALLEL SINGLE-DROPLET PROCESSING LOGIC
-# ==============================================================================
-
 def solve_individual_droplet(idx, single_vol, single_biomass, t_eval, params, bin_edges):
     batch_vols = np.array([single_vol])
     batch_biomass = np.array([single_biomass])
-    
     current_batch_size = 1
     N_STEPS = len(t_eval)
     n_bins = len(bin_edges) - 1
@@ -382,7 +362,6 @@ def solve_individual_droplet(idx, single_vol, single_biomass, t_eval, params, bi
         y0_flat = y0_mat.flatten()
         args = (current_batch_size, batch_vols, params['mu_max'], params['Ks'], params['Y'],
                 params['K_on'], params['K_off'], params['lambda_max'], params['K_D'], params['n_hill'])
-
     elif model == "Linear Lysis Rate":
         y0_mat = np.zeros((current_batch_size, 3))
         y0_mat[:, 0] = batch_biomass
@@ -391,7 +370,6 @@ def solve_individual_droplet(idx, single_vol, single_biomass, t_eval, params, bi
         A0_vec = np.full(current_batch_size, params['A0'])
         args = (current_batch_size, batch_vols, A0_vec, params['mu_max'], params['Ks'], params['Y'],
                 params['a'], params['b'], params['K_A0'], params['n_hill'])
-
     elif model == "Combined Model":
         y0_mat = np.zeros((current_batch_size, 5))
         y0_mat[:, 0] = params['A0']
@@ -444,22 +422,16 @@ def solve_individual_droplet(idx, single_vol, single_biomass, t_eval, params, bi
     return (idx, final_c[0], local_bin_sums, local_bin_counts, 
             local_a_eff, local_density, local_a_bound, local_net_rate, local_s_sums)
 
-
 def _compute_simulation_core(vols, initial_biomass, total_vols_range, params):
     t_eval = np.arange(params['t_start'], params['t_end'] + params['dt'] / 100.0, params['dt'])
-
-    if len(t_eval) < 2:
-        t_eval = np.linspace(params['t_start'], params['t_end'], 2)
-
+    if len(t_eval) < 2: t_eval = np.linspace(params['t_start'], params['t_end'], 2)
     N_STEPS = len(t_eval)
     N_occupied = len(vols)
-
     min_exp = int(np.floor(np.log10(total_vols_range[0])))
     max_exp = int(np.ceil(np.log10(total_vols_range[1])))
     bin_edges_log = np.arange(min_exp, max_exp + 1)
     bin_edges = 10 ** bin_edges_log
     n_bins = len(bin_edges) - 1
-
     total_bin_sums = np.zeros((n_bins, N_STEPS))
     total_a_eff = np.zeros((n_bins, N_STEPS))
     total_density = np.zeros((n_bins, N_STEPS))
@@ -476,16 +448,12 @@ def _compute_simulation_core(vols, initial_biomass, total_vols_range, params):
         futures = []
         for i in range(N_occupied):
             futures.append(executor.submit(
-                solve_individual_droplet, 
-                i, vols[i], initial_biomass[i], t_eval, params, bin_edges
+                solve_individual_droplet, i, vols[i], initial_biomass[i], t_eval, params, bin_edges
             ))
-
         completed_count = 0
         for future in as_completed(futures):
             try:
-                (idx, final_c_val, 
-                 l_sums, l_counts, l_a_eff, l_dens, l_abound, l_net, l_s) = future.result()
-
+                (idx, final_c_val, l_sums, l_counts, l_a_eff, l_dens, l_abound, l_net, l_s) = future.result()
                 final_counts_all[idx] = final_c_val
                 total_bin_sums += l_sums
                 total_bin_counts += l_counts
@@ -494,46 +462,35 @@ def _compute_simulation_core(vols, initial_biomass, total_vols_range, params):
                 total_a_bound += l_abound
                 total_net_rate += l_net
                 total_s_sums += l_s
-
                 completed_count += 1
-                
                 if completed_count % 50 == 0 or completed_count == N_occupied:
                     elapsed_sec = time.time() - start_time
                     prog_val = min(completed_count / N_occupied, 1.0)
                     progress_bar.progress(prog_val, text=f"Droplet {completed_count}/{N_occupied} processed")
-            
             except Exception as e:
                 st.error(f"Simulation failed for droplet: {e}")
                 progress_bar.empty()
                 return None
-
     progress_bar.empty()
-
     return (total_bin_sums, total_bin_counts, final_counts_all, t_eval, bin_edges,
             total_a_eff, total_density, total_a_bound, total_net_rate, total_s_sums)
-
 
 def run_simulation(vols, initial_biomass, total_vols_range, params):
     return _compute_simulation_core(vols, initial_biomass, total_vols_range, params)
 
-
 # ==========================================
-# 5. PLOTTING FUNCTIONS
+# 6. PLOTTING FUNCTIONS
 # ==========================================
 
 def int_to_superscript(n):
     return str(n).translate(str.maketrans('0123456789-', '⁰¹²³⁴⁵⁶⁷⁸⁹⁻'))
 
-
 def plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges):
     p = figure(x_axis_label="Time (h)", y_axis_label="Normalized Biomass (B/B₀)",
                height=800, width=1200, tools="pan,wheel_zoom,reset,save")
-
     high_contrast_color_map = [cc.CET_D1[0], cc.CET_D1[80], cc.CET_D1[180], cc.CET_D1[230], cc.CET_D1[255]]
-
     unique_bins = sum(1 for c in bin_counts if c > 0)
     colors = linear_palette(high_contrast_color_map, unique_bins) if unique_bins > 0 else []
-
     legend_items = []
     color_idx = 0
     for i in range(len(bin_counts)):
@@ -542,22 +499,17 @@ def plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges):
             initial_val = mean_traj[0]
             norm_traj = mean_traj / initial_val if initial_val > 1e-9 else mean_traj
             norm_traj = np.where(norm_traj <= 0, np.nan, norm_traj)
-
             low_exp = int(np.log10(bin_edges[i]))
             high_exp = int(np.log10(bin_edges[i + 1]))
             label = f"10{int_to_superscript(low_exp)} - 10{int_to_superscript(high_exp)} (n={int(bin_counts[i])})"
-
             r = p.line(t_eval, norm_traj, line_color=colors[color_idx], line_width=3, alpha=0.9)
             legend_items.append((label, [r]))
             color_idx += 1
-
     total_biomass_traj = np.sum(bin_sums, axis=0)
     total_N0 = total_biomass_traj[0]
     meta_norm = total_biomass_traj / total_N0 if total_N0 > 1e-9 else total_biomass_traj
-
     r_meta = p.line(t_eval, meta_norm, line_color="white", line_width=4,
                     line_dash="dashed", alpha=1.0)
-
     legend_items.insert(0, ("Metapopulation (Avg)", [r_meta]))
     legend = Legend(items=legend_items, title="Volume Bins", click_policy="hide")
     p.add_layout(legend, 'right')
@@ -567,7 +519,6 @@ def plot_net_growth_dynamics(t_eval, net_rate_bin_sums, bin_counts, bin_edges):
     p = figure(x_axis_label="Time (h)", y_axis_label="Net Growth Rate (μ - λ) [1/h]",
                height=800, width=1200, tools="pan,wheel_zoom,reset,save",
                title="Net Growth Rate (μ - λ) Dynamics")
-
     high_contrast_color_map = [cc.CET_D1[0], cc.CET_D1[80], cc.CET_D1[180], cc.CET_D1[230], cc.CET_D1[255]]
     unique_bins = sum(1 for c in bin_counts if c > 0)
     colors = linear_palette(high_contrast_color_map, max(1, unique_bins)) if unique_bins > 0 else []
@@ -575,7 +526,6 @@ def plot_net_growth_dynamics(t_eval, net_rate_bin_sums, bin_counts, bin_edges):
     legend_items = []
     zero_line = Span(location=0, dimension='width', line_color='white', line_dash='dotted', line_width=2)
     p.add_layout(zero_line)
-
     for i in range(len(bin_counts)):
         if bin_counts[i] > 0:
             mean_net_rate = net_rate_bin_sums[i, :] / bin_counts[i]
@@ -585,30 +535,24 @@ def plot_net_growth_dynamics(t_eval, net_rate_bin_sums, bin_counts, bin_edges):
             r = p.line(t_eval, mean_net_rate, line_color=colors[color_idx], line_width=3, alpha=0.8)
             legend_items.append((label, [r]))
             color_idx += 1
-
     legend = Legend(items=legend_items, location="top_right", click_policy="hide", title="Volume Bins")
     p.add_layout(legend, 'right')
     return p
 
-
 def plot_a_eff_dynamics(t_eval, a_eff_bin_sums, bin_counts, bin_edges, params):
     title_text = "Effective Antibiotic Conc. (Bound/Density)"
     y_label = "Effective Conc. (A_eff)"
-
     if params['model'] == "Linear Lysis Rate":
         title_text = "External Antibiotic Concentration (A0)"
         y_label = "Concentration (A0)"
-
     p = figure(x_axis_label="Time (h)", y_axis_label=y_label,
                height=800, width=1200, tools="pan,wheel_zoom,reset,save",
                title=title_text)
-
     high_contrast_color_map = [cc.CET_D1[0], cc.CET_D1[80], cc.CET_D1[180], cc.CET_D1[230], cc.CET_D1[255]]
     unique_bins = sum(1 for c in bin_counts if c > 0)
     colors = linear_palette(high_contrast_color_map, max(1, unique_bins)) if unique_bins > 0 else []
     color_idx = 0
     legend_items = []
-
     for i in range(len(bin_counts)):
         if bin_counts[i] > 0:
             mean_a_eff = a_eff_bin_sums[i, :] / bin_counts[i]
@@ -618,7 +562,6 @@ def plot_a_eff_dynamics(t_eval, a_eff_bin_sums, bin_counts, bin_edges, params):
             r = p.line(t_eval, mean_a_eff, line_color=colors[color_idx], line_width=3, alpha=0.8)
             legend_items.append((label, [r]))
             color_idx += 1
-
     threshold_val = 0.0
     label_text = "Threshold"
     if params['model'] == "Linear Lysis Rate":
@@ -627,7 +570,6 @@ def plot_a_eff_dynamics(t_eval, a_eff_bin_sums, bin_counts, bin_edges, params):
     else:
         threshold_val = params['K_D']
         label_text = "K_D"
-
     thresh_line = Span(location=threshold_val, dimension='width', line_color='red',
                        line_dash='dotted', line_width=3)
     p.add_layout(thresh_line)
@@ -637,18 +579,15 @@ def plot_a_eff_dynamics(t_eval, a_eff_bin_sums, bin_counts, bin_edges, params):
     p.add_layout(legend, 'right')
     return p
 
-
 def plot_density_dynamics(t_eval, density_bin_sums, bin_counts, bin_edges):
     p = figure(x_axis_label="Time (h)", y_axis_label="Cell Density (Biomass/Volume)",
                height=800, width=1200, tools="pan,wheel_zoom,reset,save",
                title="Average Cell Density over Time", y_axis_type='log')
-
     high_contrast_color_map = [cc.CET_D1[0], cc.CET_D1[80], cc.CET_D1[180], cc.CET_D1[230], cc.CET_D1[255]]
     unique_bins = sum(1 for c in bin_counts if c > 0)
     colors = linear_palette(high_contrast_color_map, max(1, unique_bins)) if unique_bins > 0 else []
     color_idx = 0
     legend_items = []
-
     for i in range(len(bin_counts)):
         if bin_counts[i] > 0:
             mean_vals = density_bin_sums[i, :] / bin_counts[i]
@@ -662,7 +601,6 @@ def plot_density_dynamics(t_eval, density_bin_sums, bin_counts, bin_edges):
     legend = Legend(items=legend_items, location="top_right", click_policy="hide", title="Volume Bins")
     p.add_layout(legend, 'right')
     return p
-
 
 def plot_substrate_dynamics(t_eval, s_bin_sums, bin_counts, bin_edges):
     p = figure(x_axis_label="Time (h)", y_axis_label="Substrate Concentration (S)",
@@ -686,7 +624,6 @@ def plot_substrate_dynamics(t_eval, s_bin_sums, bin_counts, bin_edges):
     p.add_layout(legend, 'right')
     return p
 
-
 def plot_abound_dynamics(t_eval, abound_bin_sums, bin_counts, bin_edges):
     p = figure(x_axis_label="Time (h)", y_axis_label="Bound Antibiotic (Molecules/Droplet)",
                height=800, width=1200, tools="pan,wheel_zoom,reset,save",
@@ -709,19 +646,15 @@ def plot_abound_dynamics(t_eval, abound_bin_sums, bin_counts, bin_edges):
     p.add_layout(legend, 'right')
     return p
 
-
 def plot_distribution(total_vols, occupied_vols):
     min_exp = int(np.floor(np.log10(total_vols.min())))
     max_exp = int(np.ceil(np.log10(total_vols.max())))
     log_bins = np.linspace(min_exp, max_exp, 30)
-
     hist_total, edges_total = np.histogram(np.log10(total_vols), bins=log_bins)
     hist_occ, _ = np.histogram(np.log10(occupied_vols), bins=log_bins)
     edges_linear = 10 ** edges_total
-
     p = figure(x_axis_label="Volume", y_axis_label="Frequency",
                x_axis_type="log", height=800, width=1200, tools="pan,wheel_zoom,reset,save")
-
     p.quad(top=hist_total, bottom=0, left=edges_linear[:-1], right=edges_linear[1:],
            fill_color="grey", line_color="white", alpha=0.5, legend_label="Total Droplets")
     p.quad(top=hist_occ, bottom=0, left=edges_linear[:-1], right=edges_linear[1:],
@@ -729,25 +662,20 @@ def plot_distribution(total_vols, occupied_vols):
     p.legend.location = "top_right"
     return p
 
-
 def plot_initial_density_vc(df_density, vc_val, theoretical_density):
     source = ColumnDataSource(df_density)
     p = figure(x_axis_type='log', y_axis_type='log',
                x_axis_label='Volume (μm³)', y_axis_label='Initial Density (biomass/μm³)',
                width=1200, height=800, output_backend="webgl", tools="pan,wheel_zoom,reset,save")
-
     p.xaxis.axis_label_text_font_size = "16pt"
     p.yaxis.axis_label_text_font_size = "16pt"
-
     r_dens = p.scatter('Volume', 'InitialDensity', source=source, color='silver', alpha=0.6, size=4)
     r_roll = p.line(df_density['Volume'], df_density['RollingMeanDensity'], color='red', line_width=3)
-
     min_v, max_v = df_density['Volume'].min(), df_density['Volume'].max()
     r_theo = p.line([min_v, max_v], [theoretical_density, theoretical_density], color='white', line_width=3)
     p.add_layout(Span(location=vc_val, dimension='height', line_color='white', line_dash='dashed', line_width=3))
     r_vc_dum = p.line([min_v, max_v], [theoretical_density, theoretical_density],
                       color='white', line_dash='dashed', line_width=3, visible=False)
-
     legend = Legend(items=[
         LegendItem(label='Initial Density', renderers=[r_dens]),
         LegendItem(label='Rolling Mean', renderers=[r_roll]),
@@ -757,52 +685,35 @@ def plot_initial_density_vc(df_density, vc_val, theoretical_density):
     p.add_layout(legend)
     return p
 
-
 def plot_fold_change(vols, initial_biomass, final_biomass, vc_val):
     min_fc = -6.0
     with np.errstate(divide='ignore', invalid='ignore'):
         fc_raw = final_biomass / initial_biomass
         fc_log2 = np.log2(fc_raw)
     fc_log2 = np.where(np.isneginf(fc_log2) | np.isnan(fc_log2) | (fc_log2 < min_fc), min_fc, fc_log2)
-
     df_fc = pd.DataFrame({'Volume': vols, 'FoldChange': fc_log2, 'DropletID': np.arange(len(vols))})
     df_fc = df_fc.sort_values(by='Volume').reset_index(drop=True)
-
     df_sub = df_fc[df_fc['FoldChange'] > min_fc].copy()
-    if not df_sub.empty:
-        df_sub['MovingAverage'] = df_sub['FoldChange'].rolling(window=100, min_periods=1).mean()
-    else:
-        df_sub['MovingAverage'] = np.nan
-
+    if not df_sub.empty: df_sub['MovingAverage'] = df_sub['FoldChange'].rolling(window=100, min_periods=1).mean()
+    else: df_sub['MovingAverage'] = np.nan
     total_initial = np.sum(initial_biomass)
     total_final = np.sum(final_biomass)
     meta_fc = np.log2(total_final / total_initial) if total_final > 0 else min_fc
-
     source = ColumnDataSource(df_fc)
     sub_source = ColumnDataSource(df_sub)
-
     p = figure(x_axis_type='log', y_axis_type='linear',
                x_axis_label='Volume (μm³)', y_axis_label='Log2 biomass Fold Change',
                width=1200, height=800, y_range=(-7, 9), output_backend="webgl", tools="pan,wheel_zoom,reset,save")
-
     p.xaxis.axis_label_text_font_size = "16pt"
     p.yaxis.axis_label_text_font_size = "16pt"
     r_scat = p.scatter('Volume', 'FoldChange', source=source, color='silver', alpha=0.6, size=4)
-    
-    if not df_sub.empty:
-        r_ma = p.line('Volume', 'MovingAverage', source=sub_source, color='red', line_width=3)
-    else:
-        r_ma = p.line([], [], color='red')
-
+    if not df_sub.empty: r_ma = p.line('Volume', 'MovingAverage', source=sub_source, color='red', line_width=3)
+    else: r_ma = p.line([], [], color='red')
     min_v, max_v = df_fc['Volume'].min(), df_fc['Volume'].max()
     r_meta = p.line([min_v, max_v], [meta_fc, meta_fc], color='white', line_width=3)
     r_base = p.line([min_v, max_v], [0, 0], color='white', line_dash='dashdot', line_width=3)
     r_vc = p.line([vc_val, vc_val], [-10, 10], color='white', line_dash='dashed', line_width=3)
-
-    p.add_tools(
-        HoverTool(tooltips=[('Volume', '@Volume{0,0}'), ('Fold Change', '@FoldChange{0.00}'), ('ID', '@DropletID')],
-                  renderers=[r_scat]))
-
+    p.add_tools(HoverTool(tooltips=[('Volume', '@Volume{0,0}'), ('Fold Change', '@FoldChange{0.00}'), ('ID', '@DropletID')], renderers=[r_scat]))
     legend = Legend(items=[
         LegendItem(label='Droplet FC', renderers=[r_scat]),
         LegendItem(label='FC Moving Avg', renderers=[r_ma]),
@@ -813,7 +724,6 @@ def plot_fold_change(vols, initial_biomass, final_biomass, vc_val):
     p.add_layout(legend, 'right')
     return p, df_fc
 
-
 def plot_n0_vs_volume(df, Vc):
     plot_df = df.copy()
     plot_df['DropletID'] = plot_df.index
@@ -822,17 +732,12 @@ def plot_n0_vs_volume(df, Vc):
                x_axis_label='Volume (μm³)', y_axis_label='Initial Biomass',
                output_backend="webgl", width=1200, height=800,
                tools="pan,wheel_zoom,reset,save")
-
     p.xaxis.axis_label_text_font_size = "16pt"
     p.yaxis.axis_label_text_font_size = "16pt"
     r_scat = p.scatter('Volume', 'Biomass', source=source, color='gray', alpha=0.6, size=5,
                        legend_label='Biomass vs. Volume')
-    hover = HoverTool(tooltips=[('Volume', '@Volume{0,0}'),
-                                ('Biomass', '@Biomass{0.00}'),
-                                ('ID', '@DropletID')],
-                      renderers=[r_scat])
+    hover = HoverTool(tooltips=[('Volume', '@Volume{0,0}'), ('Biomass', '@Biomass{0.00}'), ('ID', '@DropletID')], renderers=[r_scat])
     p.add_tools(hover)
-
     filtered_df = plot_df[(plot_df['Biomass'] > 0) & (plot_df['Volume'] >= Vc)]
     stats_text = "Insufficient data for regression"
     if len(filtered_df) > 2:
@@ -843,7 +748,6 @@ def plot_n0_vs_volume(df, Vc):
         y_values = 10 ** (intercept + slope * np.log10(x_values))
         p.line(x_values, y_values, color='red', legend_label='Linear Regression', line_width=3)
         stats_text = f'<b>Regression (V > Vc):</b><br>y = {slope:.2f}x + {intercept:.2f}<br>R² = {r_value ** 2:.3f}'
-
     p.legend.location = "top_left"
     stats_div = Div(text=stats_text, width=400, height=100)
     stats_div.styles = {
@@ -854,47 +758,8 @@ def plot_n0_vs_volume(df, Vc):
     }
     return column(p, stats_div)
 
-
 def convert_df(df):
     return df.to_csv(index=False).encode('utf-8')
-
-# ==========================================
-# 6. HELPER: LOAD HISTORY STATE
-# ==========================================
-def load_params_from_history(row):
-    """
-    Updates session state keys with values from the selected history row.
-    """
-    mapping = {
-        'model': 'model_select',
-        't_start': 't_start', 't_end': 't_end', 'dt': 'dt',
-        'mean_log10': 'mean_log10', 'std_log10': 'std_log10', 'n_samples': 'n_samples',
-        'conc_exp': 'conc_exp',
-        'mu_max': 'mu_max', 'Y': 'Y', 'S0': 'S0', 'Ks': 'Ks',
-        'A0': 'A0',
-        'K_on': 'K_on', 'K_off': 'K_off', 'K_D': 'K_D', 
-        'n_hill': 'n_hill_1', 
-        'lambda_max': 'lambda_max',
-        'a': 'a', 'b': 'b', 'K_A0': 'K_A0'
-    }
-
-    for col, state_key in mapping.items():
-        if col in row and row[col] is not None:
-            if col == 'n_hill':
-                st.session_state['n_hill_1'] = row[col]
-                st.session_state['n_hill_2'] = row[col]
-                st.session_state['n_hill'] = row[col]
-            else:
-                try:
-                    val = row[col]
-                    if isinstance(val, (np.integer, int)): val = int(val)
-                    elif isinstance(val, (np.floating, float)): val = float(val)
-                    st.session_state[state_key] = val
-                except Exception:
-                    pass
-    
-    st.session_state['trigger_run'] = True
-
 
 # ==========================================
 # 7. MAIN EXECUTION
@@ -906,18 +771,31 @@ def main():
     MEAN_PIXELS = 5.5
     STD_PIXELS = 1.0
 
-    # 1. Render Sidebar
-    params = render_sidebar()
+    # --- Initialize Session State ---
+    if "sim_results" not in st.session_state: st.session_state.sim_results = None
+    if "run_history" not in st.session_state: st.session_state.run_history = []
+    if "trigger_run" not in st.session_state: st.session_state.trigger_run = False
+    if "last_selection_ts" not in st.session_state: st.session_state.last_selection_ts = None
 
-    # Initialize Session State
-    if "sim_results" not in st.session_state:
-        st.session_state.sim_results = None
-    if "run_history" not in st.session_state:
-        st.session_state.run_history = []
-    if "trigger_run" not in st.session_state:
-        st.session_state.trigger_run = False
-    if "last_selection_ts" not in st.session_state:
-        st.session_state.last_selection_ts = None
+    # --- CRITICAL FIX: CHECK FOR HISTORY SELECTION *BEFORE* SIDEBAR RENDERS ---
+    # We access the dataframe state directly from session_state before the widget is drawn again
+    if "history_table" in st.session_state and st.session_state["history_table"]["selection"]["rows"]:
+        selected_indices = st.session_state["history_table"]["selection"]["rows"]
+        if selected_indices:
+            row_idx = selected_indices[0]
+            # Safety check: ensure index is valid
+            if row_idx < len(st.session_state.run_history):
+                selected_row = st.session_state.run_history[row_idx]
+                ts = selected_row.get('Timestamp')
+                
+                # Only load if this is a NEW selection to avoid infinite reload loops
+                if ts != st.session_state.last_selection_ts:
+                    st.session_state.last_selection_ts = ts
+                    load_params_from_history(selected_row)
+                    # We do NOT return here, we let the script flow continue so sidebar uses new values
+
+    # 1. Render Sidebar (Now using potentially updated state)
+    params = render_sidebar()
 
     # 2. Display Metrics
     if st.session_state.sim_results is not None:
@@ -930,46 +808,35 @@ def main():
         col1.metric("Total Droplets", f"{n_trimmed:,}")
         col2.metric("Occupied", f"{N_occupied:,} ({pct:.2f}%)")
         col3.metric("Antibiotic Conc", f"{data['params']['A0']}") 
-        
         st.divider()
 
     # 3. Header and Controls
     st.subheader("Results Analysis")
-    
     col_btn, _ = st.columns([2,6])
     with col_btn:
         manual_run = st.button("Run Simulation", type="primary")
 
     plot_options = [
-        "Population Dynamics",
-        "Droplet Distribution",
-        "Initial Density & Vc",
-        "Fold Change",
-        "N0 vs Volume",
-        "Net Growth Rate (μ - λ)",
-        "Substrate Dynamics",
-        "Antibiotic Dynamics",
-        "Density Dynamics",
-        "Bound Antibiotic"
+        "Population Dynamics", "Droplet Distribution", "Initial Density & Vc",
+        "Fold Change", "N0 vs Volume", "Net Growth Rate (μ - λ)",
+        "Substrate Dynamics", "Antibiotic Dynamics", "Density Dynamics", "Bound Antibiotic"
     ]
     
     # 4. Logic: Run Simulation
+    # Runs if manual button, OR triggered from history selection, OR first run
     should_run = manual_run or st.session_state.trigger_run or st.session_state.sim_results is None
 
     if should_run:
-        st.session_state.trigger_run = False
-        
+        st.session_state.trigger_run = False # Reset trigger
         with st.spinner("Running simulation..."):
             vols, counts, initial_biomass, total_vols = generate_population(
                 params['mean_log10'], params['std_log10'], params['n_samples'],
                 params['concentration'], MEAN_PIXELS, STD_PIXELS
             )
-
             sort_idx = np.argsort(vols)
             vols = vols[sort_idx]
             counts = counts[sort_idx]
             initial_biomass = initial_biomass[sort_idx]
-
             n_trimmed = len(total_vols)
             N_occupied = len(vols)
             
@@ -982,45 +849,33 @@ def main():
                 sim_output = run_simulation(
                     vols, initial_biomass, (total_vols.min(), total_vols.max()), params
                 )
-
                 if sim_output:
+                    # Update History
                     row = {k: v for k, v in params.items() if isinstance(v, (int, float, str))}
                     row['Timestamp'] = datetime.now().strftime("%H:%M:%S")
                     
+                    # Clean N/A params
                     model = params['model']
                     all_specifics = ['K_on', 'K_off', 'K_D', 'n_hill', 'lambda_max', 'a', 'b', 'K_A0']
-                    
-                    if model == "Effective Concentration":
-                        relevant = ['K_on', 'K_off', 'K_D', 'n_hill', 'lambda_max']
-                    elif model == "Linear Lysis Rate":
-                        relevant = ['a', 'b', 'K_A0', 'n_hill']
-                    elif model == "Combined Model":
-                        relevant = ['K_on', 'K_off', 'K_D', 'n_hill', 'a', 'b']
-                    else:
-                        relevant = []
-
+                    if model == "Effective Concentration": relevant = ['K_on', 'K_off', 'K_D', 'n_hill', 'lambda_max']
+                    elif model == "Linear Lysis Rate": relevant = ['a', 'b', 'K_A0', 'n_hill']
+                    elif model == "Combined Model": relevant = ['K_on', 'K_off', 'K_D', 'n_hill', 'a', 'b']
+                    else: relevant = []
                     for key in all_specifics:
-                        if key not in relevant:
-                            row[key] = None 
+                        if key not in relevant: row[key] = None 
 
+                    # Add to history if unique
                     if not st.session_state.run_history or row['Timestamp'] != st.session_state.run_history[0].get('Timestamp'):
                          st.session_state.run_history.insert(0, row)
-                    
                     if len(st.session_state.run_history) > 20:
                         st.session_state.run_history = st.session_state.run_history[:20]
 
             st.session_state.sim_results = {
-                "vols": vols,
-                "counts": counts,
-                "initial_biomass": initial_biomass,
-                "total_vols": total_vols,
-                "n_trimmed": n_trimmed,
-                "N_occupied": N_occupied,
-                "df_density": df_density,
-                "vc_val": vc_val,
-                "sim_output": sim_output,
-                "params": params
+                "vols": vols, "counts": counts, "initial_biomass": initial_biomass,
+                "total_vols": total_vols, "n_trimmed": n_trimmed, "N_occupied": N_occupied,
+                "df_density": df_density, "vc_val": vc_val, "sim_output": sim_output, "params": params
             }
+            # Rerun to update metrics immediately
             st.rerun()
 
     # 5. Render Output Tabs
@@ -1037,94 +892,54 @@ def main():
 
             with st.container():
                 if selected_plot == "Population Dynamics":
-                    st.markdown("#### Mean Growth curves (Normalized Biomass)")
                     p = plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges)
-                    streamlit_bokeh(p, use_container_width=True)
-
                 elif selected_plot == "Droplet Distribution":
-                    st.markdown("#### Droplet Distribution: Total vs Occupied")
                     p = plot_distribution(data["total_vols"], data["vols"])
-                    streamlit_bokeh(p, use_container_width=True)
-
                 elif selected_plot == "Initial Density & Vc":
-                    st.markdown("#### Initial Density & Vc Calculation")
                     p = plot_initial_density_vc(data["df_density"], data["vc_val"], data["params"]['concentration'])
-                    streamlit_bokeh(p, use_container_width=True)
-
                 elif selected_plot == "Fold Change":
-                    st.markdown("#### Biomass Fold Change vs Volume")
                     p, df_fc = plot_fold_change(data["vols"], data["initial_biomass"], final_biomass, data["vc_val"])
-                    st.download_button("Download CSV", data=convert_df(df_fc),
-                                       file_name="fold_change_data.csv", mime="text/csv")
-                    streamlit_bokeh(p, use_container_width=True)
-
+                    st.download_button("Download CSV", data=convert_df(df_fc), file_name="fold_change_data.csv", mime="text/csv")
                 elif selected_plot == "N0 vs Volume":
-                    st.markdown(f"#### Initial Biomass (N0) vs Volume")
-                    st.info(f"Regression is calculated for Volumes ≥ Vc ({data['vc_val']:.1f} μm³)")
                     p = plot_n0_vs_volume(data["df_density"], data["vc_val"])
-                    streamlit_bokeh(p, use_container_width=True)
-
                 elif selected_plot == "Net Growth Rate (μ - λ)":
-                    st.markdown("#### Net Growth Rate ($\mu - \lambda_D$)")
-                    p_net = plot_net_growth_dynamics(t_eval, net_rate_bin_sums, bin_counts, bin_edges)
-                    streamlit_bokeh(p_net, use_container_width=True)
-
+                    p = plot_net_growth_dynamics(t_eval, net_rate_bin_sums, bin_counts, bin_edges)
                 elif selected_plot == "Substrate Dynamics":
-                    st.markdown("#### Substrate Concentration (S)")
-                    p_s = plot_substrate_dynamics(t_eval, s_bin_sums, bin_counts, bin_edges)
-                    streamlit_bokeh(p_s, use_container_width=True)
-
+                    p = plot_substrate_dynamics(t_eval, s_bin_sums, bin_counts, bin_edges)
                 elif selected_plot == "Antibiotic Dynamics":
-                    st.markdown("#### Effective Antibiotic Concentration ($A_{bound} / \\rho$)")
-                    p_aeff = plot_a_eff_dynamics(t_eval, a_eff_bin_sums, bin_counts, bin_edges, data["params"])
-                    streamlit_bokeh(p_aeff, use_container_width=True)
-
+                    p = plot_a_eff_dynamics(t_eval, a_eff_bin_sums, bin_counts, bin_edges, data["params"])
                 elif selected_plot == "Density Dynamics":
-                    st.markdown("#### Cell Density Dynamics ($B/V$)")
-                    p_dens = plot_density_dynamics(t_eval, density_bin_sums, bin_counts, bin_edges)
-                    streamlit_bokeh(p_dens, use_container_width=True)
-
+                    p = plot_density_dynamics(t_eval, density_bin_sums, bin_counts, bin_edges)
                 elif selected_plot == "Bound Antibiotic":
-                    st.markdown("#### Bound Antibiotic ($A_{bound}$)")
                     if data["params"]['model'] == "Linear Lysis Rate":
                         st.warning("This model does not simulate binding kinetics.")
+                        p = None
                     else:
-                        p_abound = plot_abound_dynamics(t_eval, a_bound_bin_sums, bin_counts, bin_edges)
-                        streamlit_bokeh(p_abound, use_container_width=True)
+                        p = plot_abound_dynamics(t_eval, a_bound_bin_sums, bin_counts, bin_edges)
+                
+                if p is not None and not isinstance(p, (str, type(None))):
+                    streamlit_bokeh(p, use_container_width=True)
 
     with tab_hist:
         st.subheader("Simulation History")
-        st.info("👆 **Click on a row** in the table below to restore its parameters and rerun the simulation.")
+        st.info("👆 **Click on a row** to restore its parameters and **automatically rerun** the simulation.")
         
         if st.session_state.run_history:
             df_hist = pd.DataFrame(st.session_state.run_history)
-            
-            # Formatting
             if 'Timestamp' in df_hist.columns:
                 cols_order = ['Timestamp', 'model']
                 other_cols = [c for c in df_hist.columns if c not in cols_order]
                 df_hist = df_hist[cols_order + other_cols]
 
-            # Use st.dataframe with selection enabled
-            selection = st.dataframe(
+            # The key="history_table" binds the selection to session_state['history_table']
+            st.dataframe(
                 df_hist,
+                key="history_table",
                 use_container_width=True,
                 hide_index=True,
                 on_select="rerun",
                 selection_mode="single-row"
             )
-
-            # Handle Selection Event
-            if selection.selection.rows:
-                row_idx = selection.selection.rows[0]
-                selected_row = st.session_state.run_history[row_idx]
-                ts = selected_row.get('Timestamp')
-                
-                # Prevent infinite loops by checking if selection changed
-                if ts != st.session_state.last_selection_ts:
-                    st.session_state.last_selection_ts = ts
-                    load_params_from_history(selected_row)
-                    st.rerun()
             
             if st.button("Clear History", type="secondary"):
                 st.session_state.run_history = []
