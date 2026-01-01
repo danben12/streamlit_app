@@ -47,7 +47,6 @@ def configure_page():
         layout="wide",
         initial_sidebar_state="expanded"
     )
-    # Custom CSS for better containers
     st.markdown("""
         <style>
         .block-container {padding-top: 1rem;}
@@ -64,6 +63,10 @@ def configure_page():
         }
         </style>
     """, unsafe_allow_html=True)
+    
+    # --- RESTORED TITLE ---
+    st.title("🦠 Growth-Lysis Micro-droplet Simulation")
+    st.markdown("---")
 
 # ==========================================
 # 2. ODE MATH MODELS
@@ -243,7 +246,7 @@ def render_equation_lab_page():
 def render_sidebar():
     st.sidebar.header("⚙️ Configuration")
     
-    # --- NAVIGATION (Reverted to Selectbox) ---
+    # --- NAVIGATION (Selectbox) ---
     app_mode = st.sidebar.selectbox("Navigation", ["Simulator", "Equation Lab"])
     
     if app_mode == "Equation Lab":
@@ -654,6 +657,7 @@ def plot_mic_vs_volume(heatmap_data, params):
     matrix = heatmap_data['matrix']
     concs = heatmap_data['conc_grid']
     vols = heatmap_data['vol_centers']
+    # Hardcoded threshold
     death_thresh = 0.0 
     
     mic_values = []
