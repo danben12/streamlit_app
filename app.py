@@ -29,7 +29,7 @@ PLOT_OPTIONS = [
     "Antibiotic Dynamics",
     "Density Dynamics",
     "Bound Antibiotic",
-    "Growth/Death Heatmap"  # <--- REPLACED
+    "Growth/Death Heatmap"
 ]
 
 # ==========================================
@@ -518,7 +518,7 @@ def plot_heatmap(conc_grid, vol_centers, data_matrix):
 
     p = figure(
         title="Survival Landscape: Volume vs Antibiotic Dose",
-        x_axis_label="Volume (Log10 µm³)", 
+        x_axis_label="Volume (µm³)", # Removed Log10, now it's just Volume with log labels
         y_axis_label="Antibiotic Concentration (µg/ml)",
         width=1200, height=800,
         tools="hover,crosshair,pan,wheel_zoom,reset,save",
@@ -539,9 +539,13 @@ def plot_heatmap(conc_grid, vol_centers, data_matrix):
         ("Fold Change", "@fc{0.00}")
     ]
     
-    p.xaxis.major_label_overrides = {
-        int(i): f"10^{int(i)}" for i in range(10)
-    }
+    # -------------------------------------------------------------
+    # SUPERSCRIPT FIX FOR HEATMAP X-AXIS
+    # -------------------------------------------------------------
+    overrides = {}
+    for i in range(15): # Cover range 10^0 to 10^15
+        overrides[i] = f"10{int_to_superscript(i)}"
+    p.xaxis.major_label_overrides = overrides
     
     return p
 
@@ -963,18 +967,32 @@ def main():
                     if st.session_state.get("heatmap_data") is None:
                         st.warning("Heatmap data not generated for current settings.")
                         if st.button("Run Heatmap Scan (0-40 µg/ml)", type="primary"):
-                            with st.spinner("Scanning 20 concentrations..."):
-                                # 1. Reuse existing population from current sim results
-                                vols = data["vols"]
-                                initial_biomass = data["initial_biomass"]
+                            with st.spinner("Scanning 20 concentrations (Subsampled for Speed)..."):
+                                # 1. Reuse existing population 
+                                all_vols = data["vols"]
+                                all_init_biomass = data["initial_biomass"]
                                 total_vols_range = (data["total_vols"].min(), data["total_vols"].max())
+                                
+                                # -----------------------------------------------------------------
+                                # OPTIMIZATION: Subsample to 2000 droplets MAX for heatmap speed
+                                # -----------------------------------------------------------------
+                                target_n = 2000
+                                if len(all_vols) > target_n:
+                                    indices = np.random.choice(len(all_vols), target_n, replace=False)
+                                    vols_sub = all_vols[indices]
+                                    init_bio_sub = all_init_biomass[indices]
+                                else:
+                                    vols_sub = all_vols
+                                    init_bio_sub = all_init_biomass
                                 
                                 # 2. Setup Grid
                                 n_concs = 20
                                 max_conc = 40.0
                                 conc_grid = np.linspace(0, max_conc, n_concs)
+                                
+                                # Setup Bins for Heatmap Aggregation (using full range)
                                 n_vol_bins = 50
-                                min_exp, max_exp = np.floor(np.log10(vols.min())), np.ceil(np.log10(vols.max()))
+                                min_exp, max_exp = np.floor(np.log10(all_vols.min())), np.ceil(np.log10(all_vols.max()))
                                 vol_bins = np.logspace(min_exp, max_exp, n_vol_bins + 1)
                                 vol_centers = np.sqrt(vol_bins[:-1] * vol_bins[1:]) 
                                 heatmap_matrix = np.zeros((n_concs, n_vol_bins))
@@ -984,13 +1002,18 @@ def main():
                                 for i, c_val in enumerate(conc_grid):
                                     temp_params = data["params"].copy()
                                     temp_params['A0'] = c_val
-                                    sim_out = run_simulation(vols, initial_biomass, total_vols_range, temp_params)
+                                    
+                                    # Run Sim on SUBSAMPLED data
+                                    sim_out = run_simulation(vols_sub, init_bio_sub, total_vols_range, temp_params)
+                                    
                                     if sim_out:
                                         final_biomass_run = sim_out[2]
                                         with np.errstate(divide='ignore', invalid='ignore'):
-                                            fc = np.log2(final_biomass_run / initial_biomass)
+                                            fc = np.log2(final_biomass_run / init_bio_sub)
                                         fc = np.nan_to_num(fc, nan=-6.0, posinf=6.0, neginf=-6.0)
-                                        indices = np.digitize(vols, vol_bins) - 1
+                                        
+                                        # Aggregate into bins
+                                        indices = np.digitize(vols_sub, vol_bins) - 1
                                         for b in range(n_vol_bins):
                                             mask = indices == b
                                             if np.any(mask):
