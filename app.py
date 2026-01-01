@@ -20,6 +20,8 @@ from numba import njit, prange
 # ==========================================
 PLOT_OPTIONS = {
     "Population Dynamics": "Tracks the normalized biomass (B/B₀) over time for different volume bins.",
+    "Survival Probability": "Percentage of droplets remaining 'alive' (Biomass > 1) over time.",
+    "MIC vs Volume (Inoculum Effect)": "The Minimum Inhibitory Concentration (MIC) required to kill bacteria at different volumes.",
     "Droplet Distribution": "Histogram comparing total droplet sizes vs. occupied droplet sizes.",
     "Initial Density & Vc": "Scatter plot of initial bacterial density vs volume, identifying the Critical Volume (Vc).",
     "Fold Change": "Log2 Fold Change of biomass (Final/Initial) vs Volume.",
@@ -45,7 +47,6 @@ def configure_page():
         layout="wide",
         initial_sidebar_state="expanded"
     )
-    # --- CSS FIX: Removed hardcoded light background for metrics to fix Dark Mode readability ---
     st.markdown("""
         <style>
         .block-container {padding-top: 2rem;}
@@ -115,7 +116,6 @@ def vec_combined_model(y_flat, t, N, V, mu_max, Ks, Y, K_on, K_off, K_D, n, a, b
 # ==========================================
 
 def load_params_from_history(row):
-    """Updates session state keys with values from the selected history row."""
     mapping = {
         'model': 'model_select',
         't_start': 't_start', 't_end': 't_end', 'dt': 'dt',
@@ -128,7 +128,6 @@ def load_params_from_history(row):
         'lambda_max': 'lambda_max',
         'a': 'a', 'b': 'b', 'K_A0': 'K_A0'
     }
-
     for col, state_key in mapping.items():
         if col in row and row[col] is not None:
             if col == 'n_hill':
@@ -145,7 +144,6 @@ def load_params_from_history(row):
                     pass
 
 def on_rerun_click():
-    """Callback for Rerun button"""
     if "history_table" in st.session_state and st.session_state["history_table"]["selection"]["rows"]:
         idx = st.session_state["history_table"]["selection"]["rows"][0]
         if idx < len(st.session_state.run_history):
@@ -160,61 +158,45 @@ def on_rerun_click():
 def render_sidebar():
     st.sidebar.header("⚙️ Configuration")
     params = {}
+    params['model'] = st.sidebar.selectbox("Mathematical Model", ["Effective Concentration", "Linear Lysis Rate", "Combined Model"], key='model_select')
 
-    # Model Selector
-    params['model'] = st.sidebar.selectbox(
-        "Mathematical Model", 
-        ["Effective Concentration", "Linear Lysis Rate", "Combined Model"], 
-        key='model_select'
-    )
-
-    # 1. Time Settings
     with st.sidebar.expander("⏱️ Time Settings", expanded=False):
         col1, col2 = st.columns(2)
         params['t_start'] = col1.number_input("Start (h)", value=st.session_state.get('t_start', 0.0), step=1.0, key='t_start')
         params['t_end'] = col2.number_input("End (h)", value=st.session_state.get('t_end', 24.0), step=1.0, key='t_end')
         params['dt'] = st.number_input("Step size (h)", value=st.session_state.get('dt', 1.0), min_value=0.01, step=0.5, key='dt', help="Integration time step")
 
-    # 2. Inoculum
     with st.sidebar.expander("💧 Inoculum & Droplets", expanded=True):
         params['n_samples'] = st.number_input("Total Droplets (N)", 1000, 100000, st.session_state.get('n_samples', 17000), 1000, key='n_samples')
-        
         c1, c2 = st.columns(2)
         params['mean_log10'] = c1.number_input("Mean Log10(Vol)", 1.0, 8.0, st.session_state.get('mean_log10', 3.0), 0.1, key='mean_log10')
         params['std_log10'] = c2.number_input("Std Dev", 0.1, 3.0, st.session_state.get('std_log10', 1.2), 0.1, key='std_log10')
-        
-        params['conc_exp'] = st.slider("Inoculum Conc (10^x)", -7.0, -1.0, st.session_state.get('conc_exp', -4.3), 0.1, key='conc_exp', help="Starting bacterial concentration in the bulk mix.")
+        params['conc_exp'] = st.slider("Inoculum Conc (10^x)", -7.0, -1.0, st.session_state.get('conc_exp', -4.3), 0.1, key='conc_exp')
         params['concentration'] = 10 ** params['conc_exp']
 
-    # 3. Biology
     with st.sidebar.expander("🧫 Bacterial Physiology", expanded=False):
         c1, c2 = st.columns(2)
-        params['mu_max'] = c1.number_input("μ_max (1/h)", value=st.session_state.get('mu_max', 0.7), key='mu_max', help="Maximum specific growth rate")
-        params['Ks'] = c2.number_input("Ks (μg/ml)", value=st.session_state.get('Ks', 2.0), key='Ks', help="Half-saturation constant for substrate")
-        
+        params['mu_max'] = c1.number_input("μ_max (1/h)", value=st.session_state.get('mu_max', 0.7), key='mu_max')
+        params['Ks'] = c2.number_input("Ks (μg/ml)", value=st.session_state.get('Ks', 2.0), key='Ks')
         c3, c4 = st.columns(2)
-        params['Y'] = c3.number_input("Yield (Y)", value=st.session_state.get('Y', 0.001), format="%.4f", key='Y', help="Biomass yield per unit substrate")
-        params['S0'] = c4.number_input("S0 (μg/ml)", value=st.session_state.get('S0', 1.0), key='S0', help="Initial substrate concentration")
+        params['Y'] = c3.number_input("Yield (Y)", value=st.session_state.get('Y', 0.001), format="%.4f", key='Y')
+        params['S0'] = c4.number_input("S0 (μg/ml)", value=st.session_state.get('S0', 1.0), key='S0')
 
-    # 4. Pharmacodynamics
     with st.sidebar.expander("💊 Pharmacodynamics", expanded=True):
         params['A0'] = st.number_input("Initial Antibiotic (A0) [μg/ml]", value=st.session_state.get('A0', 10.0), key='A0')
-        
         defaults = ['K_on', 'K_off', 'K_D', 'n_hill', 'lambda_max', 'a', 'b', 'K_A0']
         for key in defaults: params[key] = 0.0
 
-        # Dynamic inputs based on model choice
         if params['model'] in ["Effective Concentration", "Combined Model"]:
             c1, c2 = st.columns(2)
             params['K_on'] = c1.number_input("K_on", value=st.session_state.get('K_on', 750.0), key='K_on')
             params['K_off'] = c2.number_input("K_off", value=st.session_state.get('K_off', 0.01), key='K_off')
             params['K_D'] = st.number_input("K_D (Dissociation)", value=st.session_state.get('K_D', 12000.0), key='K_D')
-            
             if 'n_hill' not in st.session_state: st.session_state.n_hill = 20.0
             params['n_hill'] = st.number_input("Hill coeff (n)", value=st.session_state.get('n_hill_1', st.session_state.n_hill), key='n_hill_1')
 
         if params['model'] == "Effective Concentration":
-            params['lambda_max'] = st.number_input("λ_max (1/h)", value=st.session_state.get('lambda_max', 1.0), key='lambda_max', help="Maximum lysis rate")
+            params['lambda_max'] = st.number_input("λ_max (1/h)", value=st.session_state.get('lambda_max', 1.0), key='lambda_max')
 
         if params['model'] in ["Linear Lysis Rate", "Combined Model"]:
             c1, c2 = st.columns(2)
@@ -226,7 +208,6 @@ def render_sidebar():
             val_n_hill = st.session_state.get('n_hill_2', 20.0)
             params['n_hill'] = st.number_input("Hill coeff (n)", value=val_n_hill, key='n_hill_2')
 
-        # Unified n_hill storage
         if 'n_hill_1' in params: params['n_hill'] = params['n_hill_1']
         elif 'n_hill_2' in params: params['n_hill'] = params['n_hill_2']
 
@@ -332,9 +313,11 @@ def calculate_derived_metrics(sol_reshaped, vols, model_type_int, mu_max, Ks):
 @njit(cache=True, fastmath=True)
 def fast_accumulate_bins_serial(bin_sums, a_eff_bin_sums, density_bin_sums,
                                   a_bound_bin_sums, net_rate_bin_sums, s_bin_sums,
+                                  alive_bin_sums,
                                   bin_counts, bin_edges, vols,
                                   batch_blive_T, batch_a_eff_T, batch_density_T,
-                                  batch_abound_T, batch_net_rate, batch_S_T):
+                                  batch_abound_T, batch_net_rate, batch_S_T,
+                                  batch_alive_mask_T):
     n_droplets = len(vols)
     n_bins = len(bin_edges) - 1
     for i in range(n_droplets):
@@ -351,6 +334,7 @@ def fast_accumulate_bins_serial(bin_sums, a_eff_bin_sums, density_bin_sums,
             a_bound_bin_sums[bin_idx, :] += batch_abound_T[i, :]
             net_rate_bin_sums[bin_idx, :] += batch_net_rate[i, :]
             s_bin_sums[bin_idx, :] += batch_S_T[i, :]
+            alive_bin_sums[bin_idx, :] += batch_alive_mask_T[i, :]
             bin_counts[bin_idx] += 1
 
 def solve_individual_droplet(idx, single_vol, single_biomass, t_eval, params, bin_edges):
@@ -366,6 +350,7 @@ def solve_individual_droplet(idx, single_vol, single_biomass, t_eval, params, bi
     local_a_bound = np.zeros((n_bins, N_STEPS))
     local_net_rate = np.zeros((n_bins, N_STEPS))
     local_s_sums = np.zeros((n_bins, N_STEPS))
+    local_alive_sums = np.zeros((n_bins, N_STEPS))
     local_bin_counts = np.zeros(n_bins)
     
     model = params['model']
@@ -438,6 +423,10 @@ def solve_individual_droplet(idx, single_vol, single_biomass, t_eval, params, bi
     batch_net_rate = batch_mu_T - batch_lambda_T
     batch_blive = np.round(batch_blive_cont)
     batch_blive_T = batch_blive.T
+    
+    # Track Survival
+    batch_alive_mask = (batch_blive > 1.0).astype(np.float64)
+    batch_alive_mask_T = batch_alive_mask.T
 
     final_c = np.mean(batch_blive[-2:, :], axis=0) if N_STEPS > 2 else batch_blive[-1, :]
     final_c = np.where(final_c < 2.0, 0.0, final_c)
@@ -445,13 +434,15 @@ def solve_individual_droplet(idx, single_vol, single_biomass, t_eval, params, bi
     fast_accumulate_bins_serial(
         local_bin_sums, local_a_eff, local_density,
         local_a_bound, local_net_rate, local_s_sums,
+        local_alive_sums,
         local_bin_counts, bin_edges, batch_vols,
         batch_blive_T, batch_a_eff_T, batch_density_T,
-        batch_abound_T, batch_net_rate, batch_S_T
+        batch_abound_T, batch_net_rate, batch_S_T,
+        batch_alive_mask_T
     )
 
     return (idx, final_c[0], local_bin_sums, local_bin_counts, 
-            local_a_eff, local_density, local_a_bound, local_net_rate, local_s_sums)
+            local_a_eff, local_density, local_a_bound, local_net_rate, local_s_sums, local_alive_sums)
 
 def _compute_simulation_core(vols, initial_biomass, total_vols_range, params):
     t_eval = np.arange(params['t_start'], params['t_end'] + params['dt'] / 100.0, params['dt'])
@@ -469,10 +460,10 @@ def _compute_simulation_core(vols, initial_biomass, total_vols_range, params):
     total_a_bound = np.zeros((n_bins, N_STEPS))
     total_net_rate = np.zeros((n_bins, N_STEPS))
     total_s_sums = np.zeros((n_bins, N_STEPS))
+    total_alive_sums = np.zeros((n_bins, N_STEPS))
     total_bin_counts = np.zeros(n_bins)
     final_counts_all = np.zeros(N_occupied)
 
-    # Progress bar only if a large simulation is running
     show_progress = (N_occupied > 100)
     if show_progress:
         progress_bar = st.progress(0, text="Initializing parallel simulation...")
@@ -488,7 +479,7 @@ def _compute_simulation_core(vols, initial_biomass, total_vols_range, params):
         completed_count = 0
         for future in as_completed(futures):
             try:
-                (idx, final_c_val, l_sums, l_counts, l_a_eff, l_dens, l_abound, l_net, l_s) = future.result()
+                (idx, final_c_val, l_sums, l_counts, l_a_eff, l_dens, l_abound, l_net, l_s, l_alive) = future.result()
                 final_counts_all[idx] = final_c_val
                 total_bin_sums += l_sums
                 total_bin_counts += l_counts
@@ -497,6 +488,7 @@ def _compute_simulation_core(vols, initial_biomass, total_vols_range, params):
                 total_a_bound += l_abound
                 total_net_rate += l_net
                 total_s_sums += l_s
+                total_alive_sums += l_alive
                 completed_count += 1
                 if show_progress and (completed_count % 50 == 0 or completed_count == N_occupied):
                     elapsed_sec = time.time() - start_time
@@ -509,7 +501,7 @@ def _compute_simulation_core(vols, initial_biomass, total_vols_range, params):
     
     if show_progress: progress_bar.empty()
     return (total_bin_sums, total_bin_counts, final_counts_all, t_eval, bin_edges,
-            total_a_eff, total_density, total_a_bound, total_net_rate, total_s_sums)
+            total_a_eff, total_density, total_a_bound, total_net_rate, total_s_sums, total_alive_sums)
 
 def run_simulation(vols, initial_biomass, total_vols_range, params):
     return _compute_simulation_core(vols, initial_biomass, total_vols_range, params)
@@ -522,15 +514,9 @@ def int_to_superscript(n):
     return str(n).translate(str.maketrans('0123456789-', '⁰¹²³⁴⁵⁶⁷⁸⁹⁻'))
 
 def plot_heatmap(conc_grid, vol_centers, data_matrix):
-    """
-    Plots a 2D Heatmap of Fold Change with uniform row heights.
-    X: Volume (Log), Y: Concentration, Color: Fold Change
-    """
     x_list = []
     y_list = []
     c_list = []
-    
-    # Standard grid spacing
     w = (np.log10(vol_centers.max()) - np.log10(vol_centers.min())) / len(vol_centers)
     h = (conc_grid[1] - conc_grid[0]) if len(conc_grid) > 1 else 1.0
 
@@ -542,11 +528,7 @@ def plot_heatmap(conc_grid, vol_centers, data_matrix):
                 y_list.append(conc)
                 c_list.append(val)
 
-    source = ColumnDataSource(data={
-        'x': x_list, 'y': y_list, 'fc': c_list,
-        'vol': 10**np.array(x_list)
-    })
-
+    source = ColumnDataSource(data={'x': x_list, 'y': y_list, 'fc': c_list, 'vol': 10**np.array(x_list)})
     mapper = linear_cmap(field_name='fc', palette=cc.CET_D1[::-1], low=-5, high=5)
 
     p = figure(
@@ -557,20 +539,85 @@ def plot_heatmap(conc_grid, vol_centers, data_matrix):
         tools="pan,wheel_zoom,reset,save",
         toolbar_location="above"
     )
-
-    # Uniform height
-    p.rect(x='x', y='y', width=w*1.02, height=h*0.98, source=source,
-           fill_color=mapper, line_color=None)
-
-    color_bar = ColorBar(color_mapper=mapper['transform'], width=8, location=(0,0),
-                         title="Log2 FC")
+    p.rect(x='x', y='y', width=w*1.02, height=h*0.98, source=source, fill_color=mapper, line_color=None)
+    color_bar = ColorBar(color_mapper=mapper['transform'], width=8, location=(0,0), title="Log2 FC")
     p.add_layout(color_bar, 'right')
     
     overrides = {}
-    for i in range(15): # Cover range 10^0 to 10^15
-        overrides[i] = f"10{int_to_superscript(i)}"
+    for i in range(15): overrides[i] = f"10{int_to_superscript(i)}"
     p.xaxis.major_label_overrides = overrides
+    return p
+
+def plot_mic_vs_volume(heatmap_data, params):
+    """Derives MIC (concentration where FC < -1) for each volume from Heatmap data."""
+    matrix = heatmap_data['matrix']
+    concs = heatmap_data['conc_grid']
+    vols = heatmap_data['vol_centers']
     
+    mic_values = []
+    vol_values = []
+    
+    # Iterate columns (Volumes)
+    for j in range(matrix.shape[1]):
+        col_fc = matrix[:, j]
+        # Find first index where FC drops below -1 (death)
+        death_indices = np.where(col_fc < -1.0)[0]
+        if len(death_indices) > 0:
+            mic_idx = death_indices[0]
+            mic_values.append(concs[mic_idx])
+            vol_values.append(vols[j])
+        else:
+            # Did not die in range
+            mic_values.append(concs[-1]) 
+            vol_values.append(vols[j])
+            
+    source = ColumnDataSource(data={'vol': vol_values, 'mic': mic_values})
+    
+    p = figure(
+        title="Inoculum Effect: Effective MIC vs Droplet Volume",
+        x_axis_label="Droplet Volume (µm³)",
+        y_axis_label="Effective MIC (µg/ml)",
+        x_axis_type="log",
+        width=1200, height=800,
+        tools="pan,wheel_zoom,reset,save"
+    )
+    
+    p.line('vol', 'mic', source=source, line_width=4, color="#ff4b4b", legend_label="MIC (FC < -1)")
+    p.scatter('vol', 'mic', source=source, size=6, color="white")
+    
+    hover = HoverTool(tooltips=[
+        ("Volume", "@vol{0,0}"),
+        ("MIC", "@mic{0.00}")
+    ])
+    p.add_tools(hover)
+    p.legend.location = "top_right"
+    
+    return p
+
+def plot_survival_probability(t_eval, alive_bin_sums, bin_counts, bin_edges):
+    p = figure(x_axis_label="Time (h)", y_axis_label="Survival Probability (%)",
+               height=800, width=1200, tools="pan,wheel_zoom,reset,save",
+               title="Time-to-Extinction: Survival Probability over Time")
+    high_contrast_color_map = [cc.CET_D1[0], cc.CET_D1[80], cc.CET_D1[180], cc.CET_D1[230], cc.CET_D1[255]]
+    unique_bins = sum(1 for c in bin_counts if c > 0)
+    colors = linear_palette(high_contrast_color_map, unique_bins) if unique_bins > 0 else []
+    legend_items = []
+    color_idx = 0
+    for i in range(len(bin_counts)):
+        if bin_counts[i] > 0:
+            # Alive Fraction
+            alive_traj = (alive_bin_sums[i, :] / bin_counts[i]) * 100.0
+            
+            low_exp = int(np.log10(bin_edges[i]))
+            high_exp = int(np.log10(bin_edges[i + 1]))
+            label = f"10{int_to_superscript(low_exp)} - 10{int_to_superscript(high_exp)} (n={int(bin_counts[i])})"
+            
+            r = p.line(t_eval, alive_traj, line_color=colors[color_idx], line_width=3, alpha=0.9)
+            legend_items.append((label, [r]))
+            color_idx += 1
+    
+    legend = Legend(items=legend_items, title="Volume Bins", click_policy="hide")
+    p.add_layout(legend, 'right')
     return p
 
 def plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges):
@@ -867,7 +914,6 @@ def main():
     params = render_sidebar()
     
     # 2. METRICS CONTAINER (Placeholder for Top Dashboard)
-    #    Defined here, but populated AFTER simulation logic to ensure freshness.
     metrics_container = st.container()
 
     # 3. CONTROLS (Button Below Metrics)
@@ -880,7 +926,7 @@ def main():
 
     if should_run:
         st.session_state.trigger_run = False 
-        st.session_state.heatmap_data = None # Clear old heatmap data if parameters change
+        st.session_state.heatmap_data = None
         
         # --- A. RUN MAIN SIMULATION ---
         with st.spinner("Processing main droplet population..."):
@@ -931,17 +977,14 @@ def main():
         # --- B. RUN HEATMAP SCAN (IMMEDIATELY AFTER) ---
         if N_occupied > 0:
             with st.spinner("Calculating Survival Landscape..."):
-                # 1. Define Synthetic Volume Grid (50 Points)
                 min_log = np.log10(total_vols.min())
                 max_log = np.log10(total_vols.max())
                 vol_grid = np.logspace(min_log, max_log, 50) 
                 
-                # 2. Define Idealized Biomass (Corrected for Occupied State)
                 conc_for_generation = params["concentration"] 
                 expected_counts = np.maximum(vol_grid * conc_for_generation, 1.0)
                 init_biomass_grid = expected_counts * MEAN_PIXELS
                 
-                # 3. Define Concentration Grid (Continuous/Uniform)
                 n_concs = 20
                 max_conc = 40.0
                 conc_grid = np.linspace(0, max_conc, n_concs)
@@ -949,7 +992,6 @@ def main():
                 
                 vol_centers = vol_grid 
 
-                # 4. Scan Loop
                 scan_bar = st.progress(0, text="Simulating across concentration gradients...")
                 for i, c_val in enumerate(conc_grid):
                     temp_params = params.copy()
@@ -1007,7 +1049,7 @@ def main():
             st.info("👋 Welcome! Please configure settings in the sidebar and click **'Run Simulation'** to start.")
         else:
             (bin_sums, bin_counts, final_biomass, t_eval, bin_edges,
-             a_eff_bin_sums, density_bin_sums, a_bound_bin_sums, net_rate_bin_sums, s_bin_sums) = data["sim_output"]
+             a_eff_bin_sums, density_bin_sums, a_bound_bin_sums, net_rate_bin_sums, s_bin_sums, alive_bin_sums) = data["sim_output"]
 
             with st.container():
                 p = None
@@ -1019,6 +1061,13 @@ def main():
                     else:
                         st.warning("Heatmap data unavailable. Please Run Simulation.")
 
+                elif selected_plot == "Survival Probability":
+                    p = plot_survival_probability(t_eval, alive_bin_sums, bin_counts, bin_edges)
+                elif selected_plot == "MIC vs Volume (Inoculum Effect)":
+                    if st.session_state.get("heatmap_data"):
+                        p = plot_mic_vs_volume(st.session_state.heatmap_data, data["params"])
+                    else:
+                        st.warning("Heatmap data unavailable. Please Run Simulation.")
                 elif selected_plot == "Population Dynamics":
                     p = plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges)
                 elif selected_plot == "Droplet Distribution":
