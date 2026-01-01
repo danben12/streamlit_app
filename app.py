@@ -135,8 +135,8 @@ def load_params_from_history(row):
         'K_on': 'K_on', 'K_off': 'K_off', 'K_D': 'K_D', 
         'n_hill': 'n_hill_1', 
         'lambda_max': 'lambda_max',
-        'a': 'a', 'b': 'b', 'K_A0': 'K_A0',
-        'mic_threshold': 'mic_threshold'
+        'a': 'a', 'b': 'b', 'K_A0': 'K_A0'
+        # 'mic_threshold' removed from history loading since it's hardcoded
     }
     for col, state_key in mapping.items():
         if col in row and row[col] is not None:
@@ -288,7 +288,8 @@ def render_sidebar():
     # 4. Pharmacodynamics
     with st.sidebar.expander("💊 Pharmacodynamics", expanded=True):
         params['A0'] = st.number_input("Initial Antibiotic (A0)", value=st.session_state.get('A0', 10.0), key='A0')
-        params['mic_threshold'] = st.slider("Death Threshold (Log2 FC)", -6.0, 0.0, st.session_state.get('mic_threshold', -1.0), 0.1, key='mic_threshold')
+        
+        # --- SLIDER REMOVED HERE ---
 
         defaults = ['K_on', 'K_off', 'K_D', 'n_hill', 'lambda_max', 'a', 'b', 'K_A0']
         for key in defaults: params[key] = 0.0
@@ -657,7 +658,8 @@ def plot_mic_vs_volume(heatmap_data, params):
     matrix = heatmap_data['matrix']
     concs = heatmap_data['conc_grid']
     vols = heatmap_data['vol_centers']
-    death_thresh = params.get('mic_threshold', -1.0)
+    # HARDCODED VALUE AS REQUESTED
+    death_thresh = 0.0 
     
     mic_values = []
     vol_values = []
@@ -675,6 +677,7 @@ def plot_mic_vs_volume(heatmap_data, params):
             
     source = ColumnDataSource(data={'vol': vol_values, 'mic': mic_values})
     p = figure(
+        # Updated Title to reflect hardcoded value
         title=f"Inoculum Effect: Effective MIC vs Droplet Volume (Death Threshold FC < {death_thresh})",
         x_axis_label="Droplet Volume (µm³)",
         y_axis_label="Effective MIC (µg/ml)",
