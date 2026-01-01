@@ -3,13 +3,12 @@ import numpy as np
 import pandas as pd
 from scipy.integrate import odeint
 from bokeh.plotting import figure
-from bokeh.models import ColumnDataSource, HoverTool, Legend, LegendItem, Span
+from bokeh.models import ColumnDataSource, HoverTool, Legend, LegendItem, Span, Div, LinearColorMapper, ColorBar, BasicTicker
 from bokeh.palettes import linear_palette
 import colorcet as cc
 from streamlit_bokeh import streamlit_bokeh
 from scipy.stats import linregress
 from bokeh.layouts import column
-from bokeh.models import Div
 import time
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -138,7 +137,7 @@ def on_rerun_click():
             st.session_state.trigger_run = True
 
 # ==========================================
-# 4. UI COMPONENTS (CORRECTED)
+# 4. UI COMPONENTS
 # ==========================================
 
 def render_sidebar():
@@ -154,153 +153,52 @@ def render_sidebar():
     st.sidebar.subheader("Time Settings")
     col1, col2, col3 = st.sidebar.columns(3)
     
-    # We use st.session_state.get() for all 'value' arguments to avoid
-    # the "widget created with default value but set via Session State" error.
-    
-    params['t_start'] = col1.number_input(
-        "Start (h)", 
-        value=st.session_state.get('t_start', 0.0), 
-        step=1.0, 
-        key='t_start'
-    )
-    params['t_end'] = col2.number_input(
-        "End (h)", 
-        value=st.session_state.get('t_end', 24.0), 
-        step=1.0, 
-        key='t_end'
-    )
-    params['dt'] = col3.number_input(
-        "Step (h)", 
-        value=st.session_state.get('dt', 1.0), 
-        min_value=0.01, 
-        step=0.5, 
-        key='dt'
-    )
+    params['t_start'] = col1.number_input("Start (h)", value=st.session_state.get('t_start', 0.0), step=1.0, key='t_start')
+    params['t_end'] = col2.number_input("End (h)", value=st.session_state.get('t_end', 24.0), step=1.0, key='t_end')
+    params['dt'] = col3.number_input("Step (h)", value=st.session_state.get('dt', 1.0), min_value=0.01, step=0.5, key='dt')
 
     st.sidebar.subheader("Population Generation")
-    params['mean_log10'] = st.sidebar.number_input(
-        "Mean Log10 Volume", 
-        1.0, 8.0, 
-        st.session_state.get('mean_log10', 3.0), 
-        0.1, 
-        key='mean_log10'
-    )
-    params['std_log10'] = st.sidebar.number_input(
-        "Std Dev Log10", 
-        0.1, 3.0, 
-        st.session_state.get('std_log10', 1.2), 
-        0.1, 
-        key='std_log10'
-    )
-    params['n_samples'] = st.sidebar.number_input(
-        "N Samples (Droplets)", 
-        1000, 100000, 
-        st.session_state.get('n_samples', 17000), 
-        1000, 
-        key='n_samples'
-    )
+    params['mean_log10'] = st.sidebar.number_input("Mean Log10 Volume", 1.0, 8.0, st.session_state.get('mean_log10', 3.0), 0.1, key='mean_log10')
+    params['std_log10'] = st.sidebar.number_input("Std Dev Log10", 0.1, 3.0, st.session_state.get('std_log10', 1.2), 0.1, key='std_log10')
+    params['n_samples'] = st.sidebar.number_input("N Samples (Droplets)", 1000, 100000, st.session_state.get('n_samples', 17000), 1000, key='n_samples')
     
-    params['conc_exp'] = st.sidebar.slider(
-        "Concentration Exp (10^x)", 
-        -7.0, -1.0, 
-        st.session_state.get('conc_exp', -4.3), 
-        0.1, 
-        key='conc_exp'
-    )
+    params['conc_exp'] = st.sidebar.slider("Concentration Exp (10^x)", -7.0, -1.0, st.session_state.get('conc_exp', -4.3), 0.1, key='conc_exp')
     params['concentration'] = 10 ** params['conc_exp']
 
     st.sidebar.subheader("Global Parameters")
     tab1, tab2 = st.sidebar.tabs(["Growth", "Drugs/Lysis"])
 
     with tab1:
-        params['mu_max'] = st.number_input(
-            "mu_max", 
-            value=st.session_state.get('mu_max', 0.7), 
-            key='mu_max'
-        )
-        params['Y'] = st.number_input(
-            "Yield (Y)", 
-            value=st.session_state.get('Y', 0.001), 
-            format="%.4f", 
-            key='Y'
-        )
-        params['S0'] = st.number_input(
-            "Initial S0", 
-            value=st.session_state.get('S0', 1.0), 
-            key='S0'
-        )
-        params['Ks'] = st.number_input(
-            "Ks", 
-            value=st.session_state.get('Ks', 2.0), 
-            key='Ks'
-        )
+        params['mu_max'] = st.number_input("mu_max", value=st.session_state.get('mu_max', 0.7), key='mu_max')
+        params['Y'] = st.number_input("Yield (Y)", value=st.session_state.get('Y', 0.001), format="%.4f", key='Y')
+        params['S0'] = st.number_input("Initial S0", value=st.session_state.get('S0', 1.0), key='S0')
+        params['Ks'] = st.number_input("Ks", value=st.session_state.get('Ks', 2.0), key='Ks')
 
     with tab2:
-        params['A0'] = st.number_input(
-            "Initial Antibiotic (A0)", 
-            value=st.session_state.get('A0', 10.0), 
-            key='A0'
-        )
+        params['A0'] = st.number_input("Initial Antibiotic (A0)", value=st.session_state.get('A0', 10.0), key='A0')
         
         defaults = ['K_on', 'K_off', 'K_D', 'n_hill', 'lambda_max', 'a', 'b', 'K_A0']
         for key in defaults: params[key] = 0.0
 
         if params['model'] in ["Effective Concentration", "Combined Model"]:
-            params['K_on'] = st.number_input(
-                "K_on", 
-                value=st.session_state.get('K_on', 750.0), 
-                key='K_on'
-            )
-            params['K_off'] = st.number_input(
-                "K_off", 
-                value=st.session_state.get('K_off', 0.01), 
-                key='K_off'
-            )
-            params['K_D'] = st.number_input(
-                "K_D", 
-                value=st.session_state.get('K_D', 12000.0), 
-                key='K_D'
-            )
+            params['K_on'] = st.number_input("K_on", value=st.session_state.get('K_on', 750.0), key='K_on')
+            params['K_off'] = st.number_input("K_off", value=st.session_state.get('K_off', 0.01), key='K_off')
+            params['K_D'] = st.number_input("K_D", value=st.session_state.get('K_D', 12000.0), key='K_D')
             if 'n_hill' not in st.session_state: st.session_state.n_hill = 20.0
-            
-            # Using 'n_hill_1' key for this input
-            params['n_hill'] = st.number_input(
-                "Hill coeff (n)", 
-                value=st.session_state.get('n_hill_1', st.session_state.n_hill), 
-                key='n_hill_1'
-            )
+            params['n_hill'] = st.number_input("Hill coeff (n)", value=st.session_state.get('n_hill_1', st.session_state.n_hill), key='n_hill_1')
 
         if params['model'] == "Effective Concentration":
-            params['lambda_max'] = st.number_input(
-                "lambda_max", 
-                value=st.session_state.get('lambda_max', 1.0), 
-                key='lambda_max'
-            )
+            params['lambda_max'] = st.number_input("lambda_max", value=st.session_state.get('lambda_max', 1.0), key='lambda_max')
 
         if params['model'] in ["Linear Lysis Rate", "Combined Model"]:
-            params['a'] = st.number_input(
-                "a (Growth Lysis)", 
-                value=st.session_state.get('a', 3.0), 
-                key='a'
-            )
-            params['b'] = st.number_input(
-                "b (Base Lysis)", 
-                value=st.session_state.get('b', 0.1), 
-                key='b'
-            )
+            params['a'] = st.number_input("a (Growth Lysis)", value=st.session_state.get('a', 3.0), key='a')
+            params['b'] = st.number_input("b (Base Lysis)", value=st.session_state.get('b', 0.1), key='b')
 
         if params['model'] == "Linear Lysis Rate":
-            params['K_A0'] = st.number_input(
-                "K_A0", 
-                value=st.session_state.get('K_A0', 10.0), 
-                key='K_A0'
-            )
-            
-            # Using 'n_hill_2' key for this input
+            params['K_A0'] = st.number_input("K_A0", value=st.session_state.get('K_A0', 10.0), key='K_A0')
             val_n_hill = st.session_state.get('n_hill_2', 20.0)
             params['n_hill'] = st.number_input("Hill coeff (n)", value=val_n_hill, key='n_hill_2')
 
-        # Logic to ensure the dictionary has the correct n_hill based on which widget was active
         if 'n_hill_1' in params: params['n_hill'] = params['n_hill_1']
         elif 'n_hill_2' in params: params['n_hill'] = params['n_hill_2']
 
@@ -590,9 +488,92 @@ def run_simulation(vols, initial_biomass, total_vols_range, params):
 def int_to_superscript(n):
     return str(n).translate(str.maketrans('0123456789-', '⁰¹²³⁴⁵⁶⁷⁸⁹⁻'))
 
+def plot_growth_landscape(params, current_conc):
+    """
+    Generates a heatmap of Net Growth Rate (mu - lambda) at t=0.
+    X-axis: Initial Density (Log scale)
+    Y-axis: Antibiotic Concentration (Linear scale)
+    """
+    # 1. Setup Grid
+    # Density range: 10^-7 to 10^-1 (Biomass/Volume)
+    densities_log = np.linspace(-7, -1, 100)
+    densities = 10**densities_log
+    
+    # Antibiotic Range: 0 to 40 ug/ml
+    ab_concs = np.linspace(0, 40, 100)
+    
+    # Create Meshgrid for calculation
+    D, A = np.meshgrid(densities, ab_concs)
+    
+    # 2. Extract Parameters
+    mu_max = params['mu_max']
+    S0 = params['S0']
+    Ks = params['Ks']
+    K_on = params['K_on']
+    K_off = params['K_off']
+    K_D = params['K_D']
+    n = params['n_hill'] 
+    a = params.get('a', 0)
+    b = params.get('b', 0)
+    
+    # 3. Analytical Calculation at t=0
+    # Growth Rate (mu)
+    mu_val = mu_max * S0 / (Ks + S0)
+    
+    # Effective Antibiotic (A_eff)
+    # A_eff = A_total / ( (K_off/K_on) + Density )
+    K_eq = K_off / K_on if K_on > 0 else 1e9
+    A_eff_grid = A / (K_eq + D)
+    
+    # Lysis Rate (lambda)
+    A_eff_n = np.power(A_eff_grid, n)
+    K_D_n = np.power(K_D, n)
+    hill_term = A_eff_n / (K_D_n + A_eff_n + 1e-12)
+    lambda_grid = a * hill_term * mu_val + b
+    
+    # Net Growth = mu - lambda
+    net_growth = mu_val - lambda_grid
+    
+    # 4. Prepare Data for Bokeh Image
+    # Define Color Mapper (Blue=Growth, Red=Death)
+    limit = max(abs(np.min(net_growth)), abs(np.max(net_growth)))
+    color_mapper = LinearColorMapper(palette="RdBu11", low=-limit, high=limit)
+
+    p = figure(
+        title="Parameter Tuner: Net Growth Rate (Blue=Growth, Red=Lysis)",
+        x_range=(-7, -1), y_range=(0, 40),
+        x_axis_label="Log10 Density (Biomass/Vol)", 
+        y_axis_label="Antibiotic Conc (µg/ml)",
+        height=500,
+        tools="crosshair,save,reset",
+        toolbar_location="above"
+    )
+    
+    # Render the Heatmap
+    p.image(image=[net_growth], x=-7, y=0, dw=6, dh=40,
+            color_mapper=color_mapper)
+            
+    # Add Colorbar
+    color_bar = ColorBar(color_mapper=color_mapper, ticker=BasicTicker(),
+                         label_standoff=12, border_line_color=None, location=(0,0))
+    p.add_layout(color_bar, 'right')
+    
+    # 5. Add Reference Lines
+    # The "Yellow Line" -> Your experimental condition (10 ug/ml)
+    mid_conc_line = Span(location=10, dimension='width', line_color='yellow', 
+                         line_width=4, line_dash='solid')
+    p.add_layout(mid_conc_line)
+    
+    # Label for the yellow line (Simulated via a dummy legend or title update, keeping it simple here)
+    # Add High/Low conc lines
+    p.add_layout(Span(location=3.3, dimension='width', line_color='white', line_dash='dashed', line_width=2))
+    p.add_layout(Span(location=30, dimension='width', line_color='white', line_dash='dashed', line_width=2))
+
+    return p
+
 def plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges):
     p = figure(x_axis_label="Time (h)", y_axis_label="Normalized Biomass (B/B₀)",
-               height=800, width=1200, tools="pan,wheel_zoom,reset,save")
+               height=600, width=1000, tools="pan,wheel_zoom,reset,save")
     high_contrast_color_map = [cc.CET_D1[0], cc.CET_D1[80], cc.CET_D1[180], cc.CET_D1[230], cc.CET_D1[255]]
     unique_bins = sum(1 for c in bin_counts if c > 0)
     colors = linear_palette(high_contrast_color_map, unique_bins) if unique_bins > 0 else []
@@ -622,7 +603,7 @@ def plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges):
 
 def plot_net_growth_dynamics(t_eval, net_rate_bin_sums, bin_counts, bin_edges):
     p = figure(x_axis_label="Time (h)", y_axis_label="Net Growth Rate (μ - λ) [1/h]",
-               height=800, width=1200, tools="pan,wheel_zoom,reset,save",
+               height=600, width=1000, tools="pan,wheel_zoom,reset,save",
                title="Net Growth Rate (μ - λ) Dynamics")
     high_contrast_color_map = [cc.CET_D1[0], cc.CET_D1[80], cc.CET_D1[180], cc.CET_D1[230], cc.CET_D1[255]]
     unique_bins = sum(1 for c in bin_counts if c > 0)
@@ -651,7 +632,7 @@ def plot_a_eff_dynamics(t_eval, a_eff_bin_sums, bin_counts, bin_edges, params):
         title_text = "External Antibiotic Concentration (A0)"
         y_label = "Concentration (A0)"
     p = figure(x_axis_label="Time (h)", y_axis_label=y_label,
-               height=800, width=1200, tools="pan,wheel_zoom,reset,save",
+               height=600, width=1000, tools="pan,wheel_zoom,reset,save",
                title=title_text)
     high_contrast_color_map = [cc.CET_D1[0], cc.CET_D1[80], cc.CET_D1[180], cc.CET_D1[230], cc.CET_D1[255]]
     unique_bins = sum(1 for c in bin_counts if c > 0)
@@ -686,7 +667,7 @@ def plot_a_eff_dynamics(t_eval, a_eff_bin_sums, bin_counts, bin_edges, params):
 
 def plot_density_dynamics(t_eval, density_bin_sums, bin_counts, bin_edges):
     p = figure(x_axis_label="Time (h)", y_axis_label="Cell Density (Biomass/Volume)",
-               height=800, width=1200, tools="pan,wheel_zoom,reset,save",
+               height=600, width=1000, tools="pan,wheel_zoom,reset,save",
                title="Average Cell Density over Time", y_axis_type='log')
     high_contrast_color_map = [cc.CET_D1[0], cc.CET_D1[80], cc.CET_D1[180], cc.CET_D1[230], cc.CET_D1[255]]
     unique_bins = sum(1 for c in bin_counts if c > 0)
@@ -709,7 +690,7 @@ def plot_density_dynamics(t_eval, density_bin_sums, bin_counts, bin_edges):
 
 def plot_substrate_dynamics(t_eval, s_bin_sums, bin_counts, bin_edges):
     p = figure(x_axis_label="Time (h)", y_axis_label="Substrate Concentration (S)",
-               height=800, width=1200, tools="pan,wheel_zoom,reset,save",
+               height=600, width=1000, tools="pan,wheel_zoom,reset,save",
                title="Substrate Depletion over Time")
     high_contrast_color_map = [cc.CET_D1[0], cc.CET_D1[80], cc.CET_D1[180], cc.CET_D1[230], cc.CET_D1[255]]
     unique_bins = sum(1 for c in bin_counts if c > 0)
@@ -731,7 +712,7 @@ def plot_substrate_dynamics(t_eval, s_bin_sums, bin_counts, bin_edges):
 
 def plot_abound_dynamics(t_eval, abound_bin_sums, bin_counts, bin_edges):
     p = figure(x_axis_label="Time (h)", y_axis_label="Bound Antibiotic (Molecules/Droplet)",
-               height=800, width=1200, tools="pan,wheel_zoom,reset,save",
+               height=600, width=1000, tools="pan,wheel_zoom,reset,save",
                title="Average Bound Antibiotic (A_bound) over Time")
     high_contrast_color_map = [cc.CET_D1[0], cc.CET_D1[80], cc.CET_D1[180], cc.CET_D1[230], cc.CET_D1[255]]
     unique_bins = sum(1 for c in bin_counts if c > 0)
@@ -759,7 +740,7 @@ def plot_distribution(total_vols, occupied_vols):
     hist_occ, _ = np.histogram(np.log10(occupied_vols), bins=log_bins)
     edges_linear = 10 ** edges_total
     p = figure(x_axis_label="Volume", y_axis_label="Frequency",
-               x_axis_type="log", height=800, width=1200, tools="pan,wheel_zoom,reset,save")
+               x_axis_type="log", height=600, width=1000, tools="pan,wheel_zoom,reset,save")
     p.quad(top=hist_total, bottom=0, left=edges_linear[:-1], right=edges_linear[1:],
            fill_color="grey", line_color="white", alpha=0.5, legend_label="Total Droplets")
     p.quad(top=hist_occ, bottom=0, left=edges_linear[:-1], right=edges_linear[1:],
@@ -771,7 +752,7 @@ def plot_initial_density_vc(df_density, vc_val, theoretical_density):
     source = ColumnDataSource(df_density)
     p = figure(x_axis_type='log', y_axis_type='log',
                x_axis_label='Volume (μm³)', y_axis_label='Initial Density (biomass/μm³)',
-               width=1200, height=800, output_backend="webgl", tools="pan,wheel_zoom,reset,save")
+               width=1000, height=600, output_backend="webgl", tools="pan,wheel_zoom,reset,save")
     p.xaxis.axis_label_text_font_size = "16pt"
     p.yaxis.axis_label_text_font_size = "16pt"
     r_dens = p.scatter('Volume', 'InitialDensity', source=source, color='silver', alpha=0.6, size=4)
@@ -808,7 +789,7 @@ def plot_fold_change(vols, initial_biomass, final_biomass, vc_val):
     sub_source = ColumnDataSource(df_sub)
     p = figure(x_axis_type='log', y_axis_type='linear',
                x_axis_label='Volume (μm³)', y_axis_label='Log2 biomass Fold Change',
-               width=1200, height=800, y_range=(-7, 9), output_backend="webgl", tools="pan,wheel_zoom,reset,save")
+               width=1000, height=600, y_range=(-7, 9), output_backend="webgl", tools="pan,wheel_zoom,reset,save")
     p.xaxis.axis_label_text_font_size = "16pt"
     p.yaxis.axis_label_text_font_size = "16pt"
     r_scat = p.scatter('Volume', 'FoldChange', source=source, color='silver', alpha=0.6, size=4)
@@ -835,7 +816,7 @@ def plot_n0_vs_volume(df, Vc):
     source = ColumnDataSource(plot_df)
     p = figure(x_axis_type='log', y_axis_type='log',
                x_axis_label='Volume (μm³)', y_axis_label='Initial Biomass',
-               output_backend="webgl", width=1200, height=800,
+               output_backend="webgl", width=1000, height=600,
                tools="pan,wheel_zoom,reset,save")
     p.xaxis.axis_label_text_font_size = "16pt"
     p.yaxis.axis_label_text_font_size = "16pt"
@@ -876,7 +857,6 @@ def main():
     MEAN_PIXELS = 5.5
     STD_PIXELS = 1.0
 
-    # --- Initialize Session State ---
     if "sim_results" not in st.session_state: st.session_state.sim_results = None
     if "run_history" not in st.session_state: st.session_state.run_history = []
     if "trigger_run" not in st.session_state: st.session_state.trigger_run = False
@@ -886,6 +866,28 @@ def main():
 
     # 1. Render Sidebar
     params = render_sidebar()
+
+    # === NEW: INSTANT PARAMETER TUNER ===
+    if params['model'] == "Combined Model":
+        with st.expander("🎛️ Instant Parameter Tuner (Growth vs Lysis)", expanded=True):
+            col_tune_1, col_tune_2 = st.columns([3, 1])
+            with col_tune_1:
+                # Visualize the landscape using the current sidebar params
+                landscape_plot = plot_growth_landscape(params, params['concentration'])
+                streamlit_bokeh(landscape_plot, use_container_width=True)
+            with col_tune_2:
+                st.markdown("### Tuning Guide")
+                st.info("""
+                **Goal:** Match the Yellow Line (10 µg/ml) to your data.
+                
+                * **Left (Large Drops):** Should be **RED** (Lysis).
+                * **Right (Small Drops):** Should be **BLUE** (Growth).
+                
+                **Adjust:**
+                * **K_D:** Shifts the boundary.
+                * **a:** Increases Lysis strength.
+                """)
+    # ====================================
 
     # 2. Display Metrics
     if st.session_state.sim_results is not None:
@@ -962,18 +964,12 @@ def main():
     tab_viz, tab_hist = st.tabs(["📊 Visualization", "📜 Run History"])
 
     with tab_viz:
-        # --- FIXED DROPDOWN PERSISTENCE LOGIC ---
-        # 1. We read the stored index from session state
         current_idx = st.session_state.plot_index
-        
-        # 2. We render the widget using that index
         selected_plot = st.selectbox("Select Figure to Display:", PLOT_OPTIONS, index=current_idx)
         
-        # 3. If the user changed it, we update the session state immediately
         new_idx = PLOT_OPTIONS.index(selected_plot)
         if new_idx != st.session_state.plot_index:
             st.session_state.plot_index = new_idx
-            # Note: We don't force a rerun here, because the variable 'selected_plot' is already updated for *this* run
 
         if data is None or data["N_occupied"] == 0:
             st.error("No occupied droplets found. Try increasing Concentration or Mean Volume.")
@@ -982,7 +978,6 @@ def main():
              a_eff_bin_sums, density_bin_sums, a_bound_bin_sums, net_rate_bin_sums, s_bin_sums) = data["sim_output"]
 
             with st.container():
-                # Use Global Constants for robust matching
                 if selected_plot == PLOT_OPTIONS[0]: # Population Dynamics
                     p = plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges)
                 elif selected_plot == PLOT_OPTIONS[1]: # Droplet Distribution
@@ -1023,17 +1018,15 @@ def main():
                 other_cols = [c for c in df_hist.columns if c not in cols_order]
                 df_hist = df_hist[cols_order + other_cols]
 
-            # 1. Render Table with Selection Mode
             selection = st.dataframe(
                 df_hist,
                 key="history_table",
                 use_container_width=True,
                 hide_index=True,
-                on_select="rerun", # Updates selection state immediately
+                on_select="rerun",
                 selection_mode="single-row"
             )
             
-            # 2. Render Rerun Button IF a row is selected
             if selection.selection.rows:
                 st.button("🔄 Rerun Selected Configuration", type="primary", on_click=on_rerun_click)
             
