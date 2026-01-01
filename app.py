@@ -526,7 +526,8 @@ def plot_heatmap(conc_grid, vol_centers, data_matrix):
         x_axis_label="Volume (µm³)",
         y_axis_label="Antibiotic Concentration (µg/ml)",
         width=1200, height=800,
-        tools="hover,crosshair,pan,wheel_zoom,reset,save",
+        # HOVER REMOVED HERE
+        tools="crosshair,pan,wheel_zoom,reset,save",
         toolbar_location="above"
     )
 
@@ -537,12 +538,7 @@ def plot_heatmap(conc_grid, vol_centers, data_matrix):
                          title="Log2 FC")
     p.add_layout(color_bar, 'right')
 
-    hover = p.select(dict(type=HoverTool))
-    hover.tooltips = [
-        ("Conc", "@y{0.0} µg/ml"),
-        ("Vol", "@vol{0,0} µm³"),
-        ("Fold Change", "@fc{0.00}")
-    ]
+    # HOVER CONFIGURATION REMOVED HERE
     
     overrides = {}
     for i in range(15): # Cover range 10^0 to 10^15
