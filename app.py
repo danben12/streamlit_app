@@ -497,25 +497,39 @@ def int_to_superscript(n):
 
 def plot_heatmap(conc_grid, vol_centers, data_matrix):
     """
-    Plots a 2D Heatmap of Fold Change.
+    Plots a 2D Heatmap of Fold Change with adaptive row heights.
     X: Volume (Log), Y: Concentration, Color: Fold Change
     """
     x_list = []
     y_list = []
     c_list = []
+    h_list = []
+    
+    # 1. Calculate boundaries to determine row heights (Adaptive Grid)
+    # Midpoints between concentration levels
+    mids = (conc_grid[:-1] + conc_grid[1:]) / 2
+    # Extend boundaries to cover the first and last points appropriately
+    lower_bound = conc_grid[0] - (mids[0] - conc_grid[0]) if len(mids) > 0 else conc_grid[0] - 0.5
+    upper_bound = conc_grid[-1] + (conc_grid[-1] - mids[-1]) if len(mids) > 0 else conc_grid[-1] + 0.5
+    boundaries = np.concatenate(([lower_bound], mids, [upper_bound]))
+    # Heights are the difference between boundaries
+    row_heights = np.diff(boundaries)
+    
+    # Width is uniform in log space
     w = (np.log10(vol_centers.max()) - np.log10(vol_centers.min())) / len(vol_centers)
-    h = (conc_grid[1] - conc_grid[0]) if len(conc_grid) > 1 else 1.0
 
     for i, conc in enumerate(conc_grid):
+        current_h = row_heights[i]
         for j, vol in enumerate(vol_centers):
             val = data_matrix[i, j]
             if not np.isnan(val):
                 x_list.append(np.log10(vol))
                 y_list.append(conc)
                 c_list.append(val)
+                h_list.append(current_h)
 
     source = ColumnDataSource(data={
-        'x': x_list, 'y': y_list, 'fc': c_list, 
+        'x': x_list, 'y': y_list, 'fc': c_list, 'h': h_list,
         'vol': 10**np.array(x_list)
     })
 
@@ -526,19 +540,18 @@ def plot_heatmap(conc_grid, vol_centers, data_matrix):
         x_axis_label="Volume (µm³)",
         y_axis_label="Antibiotic Concentration (µg/ml)",
         width=1200, height=800,
-        # HOVER REMOVED HERE
-        tools="crosshair,pan,wheel_zoom,reset,save",
+        # REMOVED crosshair and hover
+        tools="pan,wheel_zoom,reset,save",
         toolbar_location="above"
     )
 
-    p.rect(x='x', y='y', width=w*1.02, height=h*0.98, source=source,
+    # Use adaptive height 'h' from source
+    p.rect(x='x', y='y', width=w*1.02, height='h', source=source,
            fill_color=mapper, line_color=None)
 
     color_bar = ColorBar(color_mapper=mapper['transform'], width=8, location=(0,0),
                          title="Log2 FC")
     p.add_layout(color_bar, 'right')
-
-    # HOVER CONFIGURATION REMOVED HERE
     
     overrides = {}
     for i in range(15): # Cover range 10^0 to 10^15
@@ -922,16 +935,18 @@ def main():
                 
                 # 2. Define Idealized Biomass (Corrected for Occupied State)
                 conc_for_generation = params["concentration"] 
-                # FIX: Force minimum counts to 1.0 to simulate OCCUPIED droplets only.
-                # This aligns the Heatmap with the Main Simulation which filters out empty droplets.
                 expected_counts = np.maximum(vol_grid * conc_for_generation, 1.0)
                 init_biomass_grid = expected_counts * MEAN_PIXELS
                 
-                # 3. Define Concentration Grid
-                n_concs = 20
-                max_conc = 40.0
-                conc_grid = np.linspace(0, max_conc, n_concs)
-                heatmap_matrix = np.zeros((n_concs, len(vol_grid)))
+                # 3. Define Concentration Grid with MANDATORY POINTS
+                # Ensure 0, 3.3, 10, 30 are always included
+                mandatory_concs = np.array([0.0, 3.3, 10.0, 30.0])
+                base_grid = np.linspace(0, 40.0, 20)
+                conc_grid = np.unique(np.concatenate((mandatory_concs, base_grid)))
+                conc_grid.sort()
+                
+                n_concs_total = len(conc_grid)
+                heatmap_matrix = np.zeros((n_concs_total, len(vol_grid)))
                 
                 vol_centers = vol_grid 
 
@@ -950,7 +965,7 @@ def main():
                         fc = np.nan_to_num(fc, nan=-6.0, posinf=6.0, neginf=-6.0)
                         heatmap_matrix[i, :] = fc
                         
-                    scan_bar.progress((i + 1) / n_concs)
+                    scan_bar.progress((i + 1) / n_concs_total)
                 scan_bar.empty()
                 
                 st.session_state.heatmap_data = {
