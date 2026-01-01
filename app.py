@@ -19,7 +19,7 @@ from numba import njit, prange
 # 0. GLOBAL CONSTANTS
 # ==========================================
 PLOT_OPTIONS = {
-    "Population Dynamics": "Tracks the normalized biomass (B/B₀) over time. If a Baseline is frozen, it appears as a grey dotted line.",
+    "Population Dynamics": "Tracks the normalized biomass (B/B₀) over time. Frozen baselines appear as dashed lines.",
     "Survival Probability": "Percentage of droplets remaining 'alive' (Biomass > 1) over time.",
     "MIC vs Volume (Inoculum Effect)": "The Minimum Inhibitory Concentration (MIC) required to kill bacteria at different volumes.",
     "Droplet Distribution": "Histogram comparing total droplet sizes vs. occupied droplet sizes.",
@@ -53,42 +53,6 @@ def configure_page():
         h1 {margin-bottom: 0rem;}
         </style>
     """, unsafe_allow_html=True)
-    st.title("🦠 Growth-Lysis Micro-droplet Simulation")
-    st.markdown("---")
-
-def render_equations(model_name):
-    """Displays LaTeX equations for the selected model."""
-    st.markdown("### 📐 Model Equations")
-    
-    if model_name == "Effective Concentration":
-        st.latex(r"""
-            \frac{dB}{dt} = (\mu - \lambda) B
-        """)
-        st.latex(r"""
-            \mu = \mu_{max} \frac{S}{K_s + S}
-        """)
-        st.latex(r"""
-            A_{eff} = \frac{A_{bound}}{\text{Density}}
-        """)
-        st.latex(r"""
-            \lambda = \lambda_{max} \frac{A_{eff}^n}{K_D^n + A_{eff}^n}
-        """)
-        st.info("Lysis depends on the *effective* concentration (bound antibiotic per cell).")
-
-    elif model_name == "Linear Lysis Rate":
-        st.latex(r"""
-            \frac{dB}{dt} = (\mu - \lambda) B
-        """)
-        st.latex(r"""
-            \lambda = \left( a \cdot \frac{A_0^n}{K_{A0}^n + A_0^n} \cdot \mu \right) + b
-        """)
-        st.info("Lysis is linearly dependent on growth rate (μ) and external antibiotic (A0).")
-
-    elif model_name == "Combined Model":
-        st.latex(r"""
-            \lambda = \left( a \cdot \frac{A_{eff}^n}{K_D^n + A_{eff}^n} \cdot \mu \right) + b
-        """)
-        st.info("Hybrid: Lysis depends on *effective* concentration AND growth rate.")
 
 # ==========================================
 # 2. ODE MATH MODELS
@@ -161,7 +125,8 @@ def load_params_from_history(row):
         'K_on': 'K_on', 'K_off': 'K_off', 'K_D': 'K_D', 
         'n_hill': 'n_hill_1', 
         'lambda_max': 'lambda_max',
-        'a': 'a', 'b': 'b', 'K_A0': 'K_A0'
+        'a': 'a', 'b': 'b', 'K_A0': 'K_A0',
+        'mic_threshold': 'mic_threshold'
     }
 
     for col, state_key in mapping.items():
@@ -192,7 +157,7 @@ def on_freeze_baseline():
     """Saves current sim results as baseline."""
     if st.session_state.sim_results is not None:
         st.session_state.baseline_results = st.session_state.sim_results.copy()
-        st.toast("✅ Baseline Frozen! Future runs will be compared to this.", icon="❄️")
+        st.toast("✅ Baseline Frozen! Previous curves will appear as dashed lines.", icon="❄️")
 
 def on_clear_baseline():
     """Clears the baseline."""
@@ -200,12 +165,77 @@ def on_clear_baseline():
     st.toast("Baseline Cleared.", icon="🧹")
 
 # ==========================================
-# 4. UI COMPONENTS (SIDEBAR)
+# 4. EQUATION LAB PAGE
+# ==========================================
+def render_equation_lab_page():
+    st.title("📐 Equation Lab")
+    st.markdown("Detailed breakdown of the mathematical models used in the simulation.")
+    st.markdown("---")
+
+    tab1, tab2, tab3 = st.tabs(["Effective Concentration", "Linear Lysis", "Combined Model"])
+
+    with tab1:
+        st.header("Effective Concentration Model")
+        st.markdown("""
+        This model assumes lysis is driven by the number of antibiotic molecules bound **per bacterium** (Effective Concentration, $A_{eff}$).
+        It accounts for binding kinetics ($K_{on}, K_{off}$) and uses a Hill function for the lysis rate.
+        """)
+        
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("#### Differential Equations")
+            st.latex(r"\frac{dB}{dt} = (\mu - \lambda) B")
+            st.latex(r"\frac{dS}{dt} = -\frac{1}{Y} \mu \frac{B}{V}")
+            st.latex(r"\frac{dA_{free}}{dt} = -k_{on} A_{free} \frac{B}{V} + k_{off} A_{bound} + \lambda A_{bound}")
+        
+        with c2:
+            st.markdown("#### Rate Definitions")
+            st.latex(r"\mu = \mu_{max} \frac{S}{K_s + S}")
+            st.latex(r"A_{eff} = \frac{A_{bound}}{\text{Density}} = \frac{A_{bound}}{(B/V)}")
+            st.latex(r"\lambda = \lambda_{max} \frac{A_{eff}^n}{K_D^n + A_{eff}^n}")
+
+        st.info("**Key Insight:** In small droplets, $A_{free}$ depletes rapidly, lowering $A_{bound}$. However, if density is low, $A_{eff}$ can remain high.")
+
+    with tab2:
+        st.header("Linear Lysis Rate")
+        st.markdown("""
+        This model assumes lysis is proportional to the growth rate ($\mu$) and the external antibiotic concentration ($A_0$). 
+        It does **not** track binding kinetics or depletion.
+        """)
+
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("#### Differential Equations")
+            st.latex(r"\frac{dB}{dt} = (\mu - \lambda) B")
+            st.latex(r"\lambda = \left( a \cdot \frac{A_0^n}{K_{A0}^n + A_0^n} \cdot \mu \right) + b")
+        
+        with c2:
+            st.markdown("#### Parameters")
+            st.markdown("- **$a$**: Slope factor linking growth rate to lysis.")
+            st.markdown("- **$b$**: Basal lysis rate (intercept).")
+            st.markdown("- **$K_{A0}$**: Concentration for half-maximal effect.")
+
+    with tab3:
+        st.header("Combined Hybrid Model")
+        st.markdown("""
+        Combines the depletion mechanics of the *Effective Concentration* model with the growth-rate dependence of the *Linear Lysis* model.
+        """)
+        st.latex(r"\lambda = \left( a \cdot \frac{A_{eff}^n}{K_D^n + A_{eff}^n} \cdot \mu \right) + b")
+        st.markdown("Here, $A_{eff}$ is calculated dynamically via binding kinetics, but $\lambda$ scales with $\mu$.")
+
+# ==========================================
+# 5. UI COMPONENTS (SIDEBAR)
 # ==========================================
 
 def render_sidebar():
     st.sidebar.header("⚙️ Configuration")
     params = {}
+
+    # Navigation
+    app_mode = st.sidebar.selectbox("Navigation", ["Simulator", "Equation Lab"])
+    
+    if app_mode == "Equation Lab":
+        return None, "Equation Lab"
 
     # Model Selector
     params['model'] = st.sidebar.selectbox(
@@ -246,6 +276,16 @@ def render_sidebar():
     with st.sidebar.expander("💊 Pharmacodynamics", expanded=True):
         params['A0'] = st.number_input("Initial Antibiotic (A0) [μg/ml]", value=st.session_state.get('A0', 10.0), key='A0')
         
+        # New MIC Threshold Setting
+        params['mic_threshold'] = st.slider(
+            "Death Threshold (Log2 FC)", 
+            min_value=-6.0, max_value=0.0, 
+            value=st.session_state.get('mic_threshold', -1.0), 
+            step=0.1, 
+            key='mic_threshold',
+            help="Log2 Fold Change value below which a droplet is considered 'dead' for MIC calculation."
+        )
+
         defaults = ['K_on', 'K_off', 'K_D', 'n_hill', 'lambda_max', 'a', 'b', 'K_A0']
         for key in defaults: params[key] = 0.0
 
@@ -276,14 +316,10 @@ def render_sidebar():
         if 'n_hill_1' in params: params['n_hill'] = params['n_hill_1']
         elif 'n_hill_2' in params: params['n_hill'] = params['n_hill_2']
 
-    # --- EQUATION LAB (New Option 3) ---
-    with st.sidebar.expander("📐 Equation Lab", expanded=False):
-        render_equations(params['model'])
-
-    return params
+    return params, "Simulator"
 
 # ==========================================
-# 5. CORE LOGIC
+# 6. CORE LOGIC
 # ==========================================
 
 @njit(cache=True, parallel=True, fastmath=True)
@@ -576,7 +612,7 @@ def run_simulation(vols, initial_biomass, total_vols_range, params):
     return _compute_simulation_core(vols, initial_biomass, total_vols_range, params)
 
 # ==========================================
-# 6. PLOTTING FUNCTIONS
+# 7. PLOTTING FUNCTIONS
 # ==========================================
 
 def int_to_superscript(n):
@@ -618,10 +654,11 @@ def plot_heatmap(conc_grid, vol_centers, data_matrix):
     return p
 
 def plot_mic_vs_volume(heatmap_data, params):
-    """Derives MIC (concentration where FC < -1) for each volume from Heatmap data."""
+    """Derives MIC (concentration where FC < threshold) for each volume from Heatmap data."""
     matrix = heatmap_data['matrix']
     concs = heatmap_data['conc_grid']
     vols = heatmap_data['vol_centers']
+    death_thresh = params.get('mic_threshold', -1.0)
     
     mic_values = []
     vol_values = []
@@ -629,8 +666,8 @@ def plot_mic_vs_volume(heatmap_data, params):
     # Iterate columns (Volumes)
     for j in range(matrix.shape[1]):
         col_fc = matrix[:, j]
-        # Find first index where FC drops below -1 (death)
-        death_indices = np.where(col_fc < -1.0)[0]
+        # Find first index where FC drops below threshold (default -1.0)
+        death_indices = np.where(col_fc < death_thresh)[0]
         if len(death_indices) > 0:
             mic_idx = death_indices[0]
             mic_values.append(concs[mic_idx])
@@ -643,7 +680,7 @@ def plot_mic_vs_volume(heatmap_data, params):
     source = ColumnDataSource(data={'vol': vol_values, 'mic': mic_values})
     
     p = figure(
-        title="Inoculum Effect: Effective MIC vs Droplet Volume",
+        title=f"Inoculum Effect: Effective MIC vs Droplet Volume (Death Threshold FC < {death_thresh})",
         x_axis_label="Droplet Volume (µm³)",
         y_axis_label="Effective MIC (µg/ml)",
         x_axis_type="log",
@@ -651,7 +688,7 @@ def plot_mic_vs_volume(heatmap_data, params):
         tools="pan,wheel_zoom,reset,save"
     )
     
-    p.line('vol', 'mic', source=source, line_width=4, color="#ff4b4b", legend_label="MIC (FC < -1)")
+    p.line('vol', 'mic', source=source, line_width=4, color="#ff4b4b", legend_label="MIC")
     p.scatter('vol', 'mic', source=source, size=6, color="white")
     
     hover = HoverTool(tooltips=[
@@ -693,15 +730,24 @@ def plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges, baseline_data=None):
     p = figure(x_axis_label="Time (h)", y_axis_label="Normalized Biomass (B/B₀)",
                height=800, width=1200, tools="pan,wheel_zoom,reset,save")
     
-    # 1. Plot Baseline Metapopulation (If available)
+    # 1. Plot Baseline Curves (Individual Bins) - Dashed and Transparent
     if baseline_data:
-        b_sums, _, _, _, _, _, _, _, _, _, _ = baseline_data["sim_output"]
-        base_meta = np.sum(b_sums, axis=0)
-        base_norm = base_meta / base_meta[0] if base_meta[0] > 0 else base_meta
-        r_base = p.line(t_eval, base_norm, line_color="grey", line_width=4, line_dash="dotted", alpha=0.7)
-        p.add_layout(Legend(items=[("❄️ Baseline (Avg)", [r_base])], location="top_left"))
+        b_sums, b_counts, _, _, b_edges, _, _, _, _, _, _ = baseline_data["sim_output"]
+        unique_bins_b = sum(1 for c in b_counts if c > 0)
+        colors_b = linear_palette([cc.CET_D1[0], cc.CET_D1[80], cc.CET_D1[180], cc.CET_D1[230], cc.CET_D1[255]], unique_bins_b) if unique_bins_b > 0 else []
+        c_idx_b = 0
+        for i in range(len(b_counts)):
+            if b_counts[i] > 0:
+                mean_traj = b_sums[i, :] / b_counts[i]
+                initial_val = mean_traj[0]
+                norm_traj = mean_traj / initial_val if initial_val > 1e-9 else mean_traj
+                r_base = p.line(t_eval, norm_traj, line_color=colors_b[c_idx_b], line_width=2, line_dash="dashed", alpha=0.4)
+                c_idx_b += 1
+        # Add a dummy legend for baseline
+        dummy_line = p.line([], [], line_color="grey", line_dash="dashed", alpha=0.5, line_width=2)
+        p.add_layout(Legend(items=[("Baseline (Previous Run)", [dummy_line])], location="top_left"))
 
-    # 2. Plot Current Run
+    # 2. Plot Current Run (Solid Lines)
     high_contrast_color_map = [cc.CET_D1[0], cc.CET_D1[80], cc.CET_D1[180], cc.CET_D1[230], cc.CET_D1[255]]
     unique_bins = sum(1 for c in bin_counts if c > 0)
     colors = linear_palette(high_contrast_color_map, unique_bins) if unique_bins > 0 else []
@@ -725,7 +771,7 @@ def plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges, baseline_data=None):
     total_N0 = total_biomass_traj[0]
     meta_norm = total_biomass_traj / total_N0 if total_N0 > 1e-9 else total_biomass_traj
     r_meta = p.line(t_eval, meta_norm, line_color="white", line_width=4,
-                    line_dash="dashed", alpha=1.0)
+                    line_dash="solid", alpha=1.0)
     legend_items.insert(0, ("Metapopulation (Avg)", [r_meta]))
     
     legend = Legend(items=legend_items, title="Volume Bins", click_policy="hide")
@@ -994,7 +1040,13 @@ def main():
     if "trigger_run" not in st.session_state: st.session_state.trigger_run = False
     
     # 1. Render Sidebar
-    params = render_sidebar()
+    sidebar_result, current_mode = render_sidebar()
+    
+    if current_mode == "Equation Lab":
+        render_equation_lab_page()
+        return
+
+    params = sidebar_result
     
     # 2. METRICS CONTAINER (Placeholder for Top Dashboard)
     metrics_container = st.container()
