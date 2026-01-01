@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 from scipy.integrate import odeint
 from bokeh.plotting import figure
-from bokeh.models import ColumnDataSource, HoverTool, Legend, LegendItem, Span, Div, LinearColorMapper, ColorBar, BasicTicker
+from bokeh.models import ColumnDataSource, HoverTool, Legend, LegendItem, Span, Div
 from bokeh.palettes import linear_palette
 import colorcet as cc
 from streamlit_bokeh import streamlit_bokeh
@@ -27,7 +27,8 @@ PLOT_OPTIONS = [
     "Substrate Dynamics",
     "Antibiotic Dynamics",
     "Density Dynamics",
-    "Bound Antibiotic"
+    "Bound Antibiotic",
+    "Initial Growth/Death Landscape (t=0)" # <--- NEW OPTION
 ]
 
 # ==========================================
@@ -488,92 +489,110 @@ def run_simulation(vols, initial_biomass, total_vols_range, params):
 def int_to_superscript(n):
     return str(n).translate(str.maketrans('0123456789-', '⁰¹²³⁴⁵⁶⁷⁸⁹⁻'))
 
-def plot_growth_landscape(params, current_conc):
-    """
-    Generates a heatmap of Net Growth Rate (mu - lambda) at t=0.
-    X-axis: Initial Density (Log scale)
-    Y-axis: Antibiotic Concentration (Linear scale)
-    """
-    # 1. Setup Grid
-    # Density range: 10^-7 to 10^-1 (Biomass/Volume)
-    densities_log = np.linspace(-7, -1, 100)
-    densities = 10**densities_log
+def plot_initial_landscape(vols, initial_biomass, params):
+    # 1. Prepare Data: Calculate Density
+    density = initial_biomass / vols
     
-    # Antibiotic Range: 0 to 40 ug/ml
-    ab_concs = np.linspace(0, 40, 100)
-    
-    # Create Meshgrid for calculation
-    D, A = np.meshgrid(densities, ab_concs)
-    
-    # 2. Extract Parameters
-    mu_max = params['mu_max']
+    # Constants
     S0 = params['S0']
     Ks = params['Ks']
-    K_on = params['K_on']
-    K_off = params['K_off']
-    K_D = params['K_D']
-    n = params['n_hill'] 
-    a = params.get('a', 0)
-    b = params.get('b', 0)
+    mu_max = params['mu_max']
+    mu_val = mu_max * S0 / (Ks + S0) # Constant at t=0
     
-    # 3. Analytical Calculation at t=0
-    # Growth Rate (mu)
-    mu_val = mu_max * S0 / (Ks + S0)
+    # 2. Calculate Lambda (Lysis) based on Model
+    model = params['model']
+    lambdas = np.zeros_like(density)
     
-    # Effective Antibiotic (A_eff)
-    # A_eff = A_total / ( (K_off/K_on) + Density )
-    K_eq = K_off / K_on if K_on > 0 else 1e9
-    A_eff_grid = A / (K_eq + D)
+    if model == "Linear Lysis Rate":
+        # Linear Model: Lambda depends on A0, not density directly
+        a = params.get('a', 0)
+        b = params.get('b', 0)
+        K_A0 = params.get('K_A0', 1.0)
+        n = params.get('n_hill', 1.0)
+        A0 = params['A0']
+        
+        # Hill function for A0
+        A0_n = np.power(A0, n)
+        term_A0 = A0_n / (K_A0**n + A0_n + 1e-12)
+        lambdas[:] = a * term_A0 * mu_val + b
+
+    elif model in ["Effective Concentration", "Combined Model"]:
+        # Complex Models: Lambda depends on A_eff (which depends on Density)
+        K_on = params.get('K_on', 1.0)
+        K_off = params.get('K_off', 1.0)
+        K_D = params.get('K_D', 1.0)
+        n = params.get('n_hill', 1.0)
+        A0 = params['A0']
+        lambda_max = params.get('lambda_max', 1.0) # For Eff Conc model
+        a = params.get('a', 0) # For Combined
+        b = params.get('b', 0) # For Combined
+        
+        # Calculate Equilibrium A_bound and A_eff
+        # A_eff = A_total / ( (K_off/K_on) + Density )
+        K_eq = K_off / K_on if K_on > 0 else 1e9
+        A_eff = A0 / (K_eq + density)
+        
+        # Hill Function
+        A_eff_n = np.power(A_eff, n)
+        hill_term = A_eff_n / (K_D**n + A_eff_n + 1e-12)
+        
+        if model == "Effective Concentration":
+            lambdas = lambda_max * hill_term
+        else: # Combined Model
+            lambdas = a * hill_term * mu_val + b
+
+    # 3. Calculate Net Rate
+    net_rate = mu_val - lambdas
     
-    # Lysis Rate (lambda)
-    A_eff_n = np.power(A_eff_grid, n)
-    K_D_n = np.power(K_D, n)
-    hill_term = A_eff_n / (K_D_n + A_eff_n + 1e-12)
-    lambda_grid = a * hill_term * mu_val + b
+    # 4. Plotting
+    # Create DataFrame for Bokeh
+    df = pd.DataFrame({
+        'Volume': vols,
+        'NetRate': net_rate,
+        'Density': density,
+        'Status': np.where(net_rate > 0, 'Growth', 'Death')
+    })
     
-    # Net Growth = mu - lambda
-    net_growth = mu_val - lambda_grid
-    
-    # 4. Prepare Data for Bokeh Image
-    # Define Color Mapper (Blue=Growth, Red=Death)
-    limit = max(abs(np.min(net_growth)), abs(np.max(net_growth)))
-    color_mapper = LinearColorMapper(palette="RdBu11", low=-limit, high=limit)
+    # Colors: Blue for Growth, Red for Death
+    color_map = {'Growth': '#1f77b4', 'Death': '#d62728'}
+    df['Color'] = df['Status'].map(color_map)
+
+    source = ColumnDataSource(df)
 
     p = figure(
-        title="Parameter Tuner: Net Growth Rate (Blue=Growth, Red=Lysis)",
-        x_range=(-7, -1), y_range=(0, 40),
-        x_axis_label="Log10 Density (Biomass/Vol)", 
-        y_axis_label="Antibiotic Conc (µg/ml)",
-        height=500,
-        tools="crosshair,save,reset",
-        toolbar_location="above"
+        title=f"Initial Growth/Death Landscape (A0 = {params['A0']})",
+        x_axis_label="Droplet Volume (µm³)",
+        y_axis_label="Net Growth Rate (μ - λ) at t=0",
+        x_axis_type="log",
+        width=1200, height=800,
+        tools="pan,wheel_zoom,box_zoom,reset,save"
     )
     
-    # Render the Heatmap
-    p.image(image=[net_growth], x=-7, y=0, dw=6, dh=40,
-            color_mapper=color_mapper)
-            
-    # Add Colorbar
-    color_bar = ColorBar(color_mapper=color_mapper, ticker=BasicTicker(),
-                         label_standoff=12, border_line_color=None, location=(0,0))
-    p.add_layout(color_bar, 'right')
+    # Add Zero Line (The Boundary)
+    p.add_layout(Span(location=0, dimension='width', line_color='black', line_dash='dashed', line_width=2))
+
+    # Scatter points
+    r = p.scatter('Volume', 'NetRate', source=source, color='Color', size=6, alpha=0.6)
     
-    # 5. Add Reference Lines
-    # The "Yellow Line" -> Your experimental condition (10 ug/ml)
-    mid_conc_line = Span(location=10, dimension='width', line_color='yellow', 
-                         line_width=4, line_dash='solid')
-    p.add_layout(mid_conc_line)
+    # Add Hover
+    hover = HoverTool(renderers=[r], tooltips=[
+        ("Volume", "@Volume{0,0}"),
+        ("Net Rate", "@NetRate{0.000}"),
+        ("Status", "@Status"),
+        ("Density", "@Density{0.00e0}")
+    ])
+    p.add_tools(hover)
     
-    # Label for the yellow line (Simulated via a dummy legend or title update, keeping it simple here)
-    # Add High/Low conc lines
-    p.add_layout(Span(location=3.3, dimension='width', line_color='white', line_dash='dashed', line_width=2))
-    p.add_layout(Span(location=30, dimension='width', line_color='white', line_dash='dashed', line_width=2))
+    # Font Sizes
+    p.xaxis.axis_label_text_font_size = "16pt"
+    p.yaxis.axis_label_text_font_size = "16pt"
+    p.title.text_font_size = "18pt"
 
     return p
 
 def plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges):
     p = figure(x_axis_label="Time (h)", y_axis_label="Normalized Biomass (B/B₀)",
-               height=600, width=1000, tools="pan,wheel_zoom,reset,save")
+               height=800, width=1200, tools="pan,wheel_zoom,reset,save")
     high_contrast_color_map = [cc.CET_D1[0], cc.CET_D1[80], cc.CET_D1[180], cc.CET_D1[230], cc.CET_D1[255]]
     unique_bins = sum(1 for c in bin_counts if c > 0)
     colors = linear_palette(high_contrast_color_map, unique_bins) if unique_bins > 0 else []
@@ -603,7 +622,7 @@ def plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges):
 
 def plot_net_growth_dynamics(t_eval, net_rate_bin_sums, bin_counts, bin_edges):
     p = figure(x_axis_label="Time (h)", y_axis_label="Net Growth Rate (μ - λ) [1/h]",
-               height=600, width=1000, tools="pan,wheel_zoom,reset,save",
+               height=800, width=1200, tools="pan,wheel_zoom,reset,save",
                title="Net Growth Rate (μ - λ) Dynamics")
     high_contrast_color_map = [cc.CET_D1[0], cc.CET_D1[80], cc.CET_D1[180], cc.CET_D1[230], cc.CET_D1[255]]
     unique_bins = sum(1 for c in bin_counts if c > 0)
@@ -632,7 +651,7 @@ def plot_a_eff_dynamics(t_eval, a_eff_bin_sums, bin_counts, bin_edges, params):
         title_text = "External Antibiotic Concentration (A0)"
         y_label = "Concentration (A0)"
     p = figure(x_axis_label="Time (h)", y_axis_label=y_label,
-               height=600, width=1000, tools="pan,wheel_zoom,reset,save",
+               height=800, width=1200, tools="pan,wheel_zoom,reset,save",
                title=title_text)
     high_contrast_color_map = [cc.CET_D1[0], cc.CET_D1[80], cc.CET_D1[180], cc.CET_D1[230], cc.CET_D1[255]]
     unique_bins = sum(1 for c in bin_counts if c > 0)
@@ -667,7 +686,7 @@ def plot_a_eff_dynamics(t_eval, a_eff_bin_sums, bin_counts, bin_edges, params):
 
 def plot_density_dynamics(t_eval, density_bin_sums, bin_counts, bin_edges):
     p = figure(x_axis_label="Time (h)", y_axis_label="Cell Density (Biomass/Volume)",
-               height=600, width=1000, tools="pan,wheel_zoom,reset,save",
+               height=800, width=1200, tools="pan,wheel_zoom,reset,save",
                title="Average Cell Density over Time", y_axis_type='log')
     high_contrast_color_map = [cc.CET_D1[0], cc.CET_D1[80], cc.CET_D1[180], cc.CET_D1[230], cc.CET_D1[255]]
     unique_bins = sum(1 for c in bin_counts if c > 0)
@@ -690,7 +709,7 @@ def plot_density_dynamics(t_eval, density_bin_sums, bin_counts, bin_edges):
 
 def plot_substrate_dynamics(t_eval, s_bin_sums, bin_counts, bin_edges):
     p = figure(x_axis_label="Time (h)", y_axis_label="Substrate Concentration (S)",
-               height=600, width=1000, tools="pan,wheel_zoom,reset,save",
+               height=800, width=1200, tools="pan,wheel_zoom,reset,save",
                title="Substrate Depletion over Time")
     high_contrast_color_map = [cc.CET_D1[0], cc.CET_D1[80], cc.CET_D1[180], cc.CET_D1[230], cc.CET_D1[255]]
     unique_bins = sum(1 for c in bin_counts if c > 0)
@@ -712,7 +731,7 @@ def plot_substrate_dynamics(t_eval, s_bin_sums, bin_counts, bin_edges):
 
 def plot_abound_dynamics(t_eval, abound_bin_sums, bin_counts, bin_edges):
     p = figure(x_axis_label="Time (h)", y_axis_label="Bound Antibiotic (Molecules/Droplet)",
-               height=600, width=1000, tools="pan,wheel_zoom,reset,save",
+               height=800, width=1200, tools="pan,wheel_zoom,reset,save",
                title="Average Bound Antibiotic (A_bound) over Time")
     high_contrast_color_map = [cc.CET_D1[0], cc.CET_D1[80], cc.CET_D1[180], cc.CET_D1[230], cc.CET_D1[255]]
     unique_bins = sum(1 for c in bin_counts if c > 0)
@@ -740,7 +759,7 @@ def plot_distribution(total_vols, occupied_vols):
     hist_occ, _ = np.histogram(np.log10(occupied_vols), bins=log_bins)
     edges_linear = 10 ** edges_total
     p = figure(x_axis_label="Volume", y_axis_label="Frequency",
-               x_axis_type="log", height=600, width=1000, tools="pan,wheel_zoom,reset,save")
+               x_axis_type="log", height=800, width=1200, tools="pan,wheel_zoom,reset,save")
     p.quad(top=hist_total, bottom=0, left=edges_linear[:-1], right=edges_linear[1:],
            fill_color="grey", line_color="white", alpha=0.5, legend_label="Total Droplets")
     p.quad(top=hist_occ, bottom=0, left=edges_linear[:-1], right=edges_linear[1:],
@@ -752,7 +771,7 @@ def plot_initial_density_vc(df_density, vc_val, theoretical_density):
     source = ColumnDataSource(df_density)
     p = figure(x_axis_type='log', y_axis_type='log',
                x_axis_label='Volume (μm³)', y_axis_label='Initial Density (biomass/μm³)',
-               width=1000, height=600, output_backend="webgl", tools="pan,wheel_zoom,reset,save")
+               width=1200, height=800, output_backend="webgl", tools="pan,wheel_zoom,reset,save")
     p.xaxis.axis_label_text_font_size = "16pt"
     p.yaxis.axis_label_text_font_size = "16pt"
     r_dens = p.scatter('Volume', 'InitialDensity', source=source, color='silver', alpha=0.6, size=4)
@@ -789,7 +808,7 @@ def plot_fold_change(vols, initial_biomass, final_biomass, vc_val):
     sub_source = ColumnDataSource(df_sub)
     p = figure(x_axis_type='log', y_axis_type='linear',
                x_axis_label='Volume (μm³)', y_axis_label='Log2 biomass Fold Change',
-               width=1000, height=600, y_range=(-7, 9), output_backend="webgl", tools="pan,wheel_zoom,reset,save")
+               width=1200, height=800, y_range=(-7, 9), output_backend="webgl", tools="pan,wheel_zoom,reset,save")
     p.xaxis.axis_label_text_font_size = "16pt"
     p.yaxis.axis_label_text_font_size = "16pt"
     r_scat = p.scatter('Volume', 'FoldChange', source=source, color='silver', alpha=0.6, size=4)
@@ -816,7 +835,7 @@ def plot_n0_vs_volume(df, Vc):
     source = ColumnDataSource(plot_df)
     p = figure(x_axis_type='log', y_axis_type='log',
                x_axis_label='Volume (μm³)', y_axis_label='Initial Biomass',
-               output_backend="webgl", width=1000, height=600,
+               output_backend="webgl", width=1200, height=800,
                tools="pan,wheel_zoom,reset,save")
     p.xaxis.axis_label_text_font_size = "16pt"
     p.yaxis.axis_label_text_font_size = "16pt"
@@ -866,28 +885,6 @@ def main():
 
     # 1. Render Sidebar
     params = render_sidebar()
-
-    # === NEW: INSTANT PARAMETER TUNER ===
-    if params['model'] == "Combined Model":
-        with st.expander("🎛️ Instant Parameter Tuner (Growth vs Lysis)", expanded=True):
-            col_tune_1, col_tune_2 = st.columns([3, 1])
-            with col_tune_1:
-                # Visualize the landscape using the current sidebar params
-                landscape_plot = plot_growth_landscape(params, params['concentration'])
-                streamlit_bokeh(landscape_plot, use_container_width=True)
-            with col_tune_2:
-                st.markdown("### Tuning Guide")
-                st.info("""
-                **Goal:** Match the Yellow Line (10 µg/ml) to your data.
-                
-                * **Left (Large Drops):** Should be **RED** (Lysis).
-                * **Right (Small Drops):** Should be **BLUE** (Growth).
-                
-                **Adjust:**
-                * **K_D:** Shifts the boundary.
-                * **a:** Increases Lysis strength.
-                """)
-    # ====================================
 
     # 2. Display Metrics
     if st.session_state.sim_results is not None:
@@ -978,6 +975,7 @@ def main():
              a_eff_bin_sums, density_bin_sums, a_bound_bin_sums, net_rate_bin_sums, s_bin_sums) = data["sim_output"]
 
             with st.container():
+                p = None
                 if selected_plot == PLOT_OPTIONS[0]: # Population Dynamics
                     p = plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges)
                 elif selected_plot == PLOT_OPTIONS[1]: # Droplet Distribution
@@ -1003,6 +1001,8 @@ def main():
                         p = None
                     else:
                         p = plot_abound_dynamics(t_eval, a_bound_bin_sums, bin_counts, bin_edges)
+                elif selected_plot == PLOT_OPTIONS[10]: # Initial Growth/Death Landscape (t=0)
+                     p = plot_initial_landscape(data["vols"], data["initial_biomass"], data["params"])
                 
                 if p is not None and not isinstance(p, (str, type(None))):
                     streamlit_bokeh(p, use_container_width=True)
