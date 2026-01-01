@@ -518,7 +518,7 @@ def plot_heatmap(conc_grid, vol_centers, data_matrix):
 
     p = figure(
         title="Survival Landscape: Volume vs Antibiotic Dose",
-        x_axis_label="Volume (µm³)", # Removed Log10, now it's just Volume with log labels
+        x_axis_label="Volume (µm³)",
         y_axis_label="Antibiotic Concentration (µg/ml)",
         width=1200, height=800,
         tools="hover,crosshair,pan,wheel_zoom,reset,save",
@@ -934,6 +934,8 @@ def main():
 
             with st.container():
                 p = None
+                
+                # --- STANDARD PLOTS ---
                 if selected_plot == PLOT_OPTIONS[0]: # Population Dynamics
                     p = plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges)
                 elif selected_plot == PLOT_OPTIONS[1]: # Droplet Distribution
@@ -960,80 +962,104 @@ def main():
                     else:
                         p = plot_abound_dynamics(t_eval, a_bound_bin_sums, bin_counts, bin_edges)
                         
-                elif selected_plot == PLOT_OPTIONS[10]: # Growth/Death Heatmap
-                    # -------------------------------------------------------------
-                    # CUSTOM LOGIC FOR HEATMAP GENERATION INSIDE PLOT AREA
-                    # -------------------------------------------------------------
-                    if st.session_state.get("heatmap_data") is None:
-                        st.warning("Heatmap data not generated for current settings.")
-                        if st.button("Run Heatmap Scan (0-40 µg/ml)", type="primary"):
-                            with st.spinner("Scanning 20 concentrations (Subsampled for Speed)..."):
-                                # 1. Reuse existing population 
-                                all_vols = data["vols"]
-                                all_init_biomass = data["initial_biomass"]
-                                total_vols_range = (data["total_vols"].min(), data["total_vols"].max())
+                # --- HEATMAP LOGIC (IMPROVED RERUN) ---
+                elif selected_plot == PLOT_OPTIONS[10]: 
+                    
+                    # 1. Check if current params match stored heatmap params
+                    current_params_clean = {k: v for k, v in data["params"].items() if k != 'A0'} # A0 varies in scan
+                    stored_params = st.session_state.get("heatmap_params")
+                    stored_params_clean = {k: v for k, v in stored_params.items() if k != 'A0'} if stored_params else None
+                    
+                    is_stale = (stored_params_clean != current_params_clean) if stored_params else True
+                    has_data = st.session_state.get("heatmap_data") is not None
+                    
+                    # 2. UI Controls
+                    col_run, col_status = st.columns([1, 3])
+                    
+                    with col_run:
+                        btn_label = "▶️ Run Heatmap Scan" if is_stale else "🔄 Regenerate Heatmap"
+                        run_clicked = st.button(btn_label, type="primary", key="btn_heatmap_run")
+                        
+                    with col_status:
+                        if not has_data:
+                            st.info("Scan not yet run for these settings.")
+                        elif is_stale:
+                            st.warning("⚠️ Stale Data: Settings changed since last scan.")
+                        else:
+                            st.success("✅ Up to Date.")
+
+                    # 3. Execution Logic
+                    if run_clicked:
+                        with st.spinner("Scanning 20 concentrations (Subsampled for Speed)..."):
+                            # Reuse population 
+                            all_vols = data["vols"]
+                            all_init_biomass = data["initial_biomass"]
+                            total_vols_range = (data["total_vols"].min(), data["total_vols"].max())
+                            
+                            # Subsampling (Limit to 2000 droplets)
+                            target_n = 2000
+                            if len(all_vols) > target_n:
+                                indices = np.random.choice(len(all_vols), target_n, replace=False)
+                                vols_sub = all_vols[indices]
+                                init_bio_sub = all_init_biomass[indices]
+                            else:
+                                vols_sub = all_vols
+                                init_bio_sub = all_init_biomass
+                            
+                            # Setup Grid
+                            n_concs = 20
+                            max_conc = 40.0
+                            conc_grid = np.linspace(0, max_conc, n_concs)
+                            
+                            n_vol_bins = 50
+                            min_exp, max_exp = np.floor(np.log10(all_vols.min())), np.ceil(np.log10(all_vols.max()))
+                            vol_bins = np.logspace(min_exp, max_exp, n_vol_bins + 1)
+                            vol_centers = np.sqrt(vol_bins[:-1] * vol_bins[1:]) 
+                            heatmap_matrix = np.zeros((n_concs, n_vol_bins))
+                            
+                            # Run Scan Loop
+                            scan_bar = st.progress(0, text="Scanning...")
+                            for i, c_val in enumerate(conc_grid):
+                                temp_params = data["params"].copy()
+                                temp_params['A0'] = c_val
                                 
-                                # -----------------------------------------------------------------
-                                # OPTIMIZATION: Subsample to 2000 droplets MAX for heatmap speed
-                                # -----------------------------------------------------------------
-                                target_n = 2000
-                                if len(all_vols) > target_n:
-                                    indices = np.random.choice(len(all_vols), target_n, replace=False)
-                                    vols_sub = all_vols[indices]
-                                    init_bio_sub = all_init_biomass[indices]
-                                else:
-                                    vols_sub = all_vols
-                                    init_bio_sub = all_init_biomass
+                                sim_out = run_simulation(vols_sub, init_bio_sub, total_vols_range, temp_params)
                                 
-                                # 2. Setup Grid
-                                n_concs = 20
-                                max_conc = 40.0
-                                conc_grid = np.linspace(0, max_conc, n_concs)
-                                
-                                # Setup Bins for Heatmap Aggregation (using full range)
-                                n_vol_bins = 50
-                                min_exp, max_exp = np.floor(np.log10(all_vols.min())), np.ceil(np.log10(all_vols.max()))
-                                vol_bins = np.logspace(min_exp, max_exp, n_vol_bins + 1)
-                                vol_centers = np.sqrt(vol_bins[:-1] * vol_bins[1:]) 
-                                heatmap_matrix = np.zeros((n_concs, n_vol_bins))
-                                
-                                # 3. Run Loop
-                                scan_bar = st.progress(0, text="Scanning...")
-                                for i, c_val in enumerate(conc_grid):
-                                    temp_params = data["params"].copy()
-                                    temp_params['A0'] = c_val
+                                if sim_out:
+                                    final_biomass_run = sim_out[2]
+                                    with np.errstate(divide='ignore', invalid='ignore'):
+                                        fc = np.log2(final_biomass_run / init_bio_sub)
+                                    fc = np.nan_to_num(fc, nan=-6.0, posinf=6.0, neginf=-6.0)
                                     
-                                    # Run Sim on SUBSAMPLED data
-                                    sim_out = run_simulation(vols_sub, init_bio_sub, total_vols_range, temp_params)
-                                    
-                                    if sim_out:
-                                        final_biomass_run = sim_out[2]
-                                        with np.errstate(divide='ignore', invalid='ignore'):
-                                            fc = np.log2(final_biomass_run / init_bio_sub)
-                                        fc = np.nan_to_num(fc, nan=-6.0, posinf=6.0, neginf=-6.0)
-                                        
-                                        # Aggregate into bins
-                                        indices = np.digitize(vols_sub, vol_bins) - 1
-                                        for b in range(n_vol_bins):
-                                            mask = indices == b
-                                            if np.any(mask):
-                                                heatmap_matrix[i, b] = np.mean(fc[mask])
-                                            else:
-                                                heatmap_matrix[i, b] = np.nan
-                                    scan_bar.progress((i + 1) / n_concs)
-                                scan_bar.empty()
-                                
-                                st.session_state.heatmap_data = {
-                                    "conc_grid": conc_grid,
-                                    "vol_centers": vol_centers,
-                                    "matrix": heatmap_matrix
-                                }
-                                st.rerun()
-                    else:
+                                    # Aggregate into bins
+                                    indices = np.digitize(vols_sub, vol_bins) - 1
+                                    for b in range(n_vol_bins):
+                                        mask = indices == b
+                                        if np.any(mask):
+                                            heatmap_matrix[i, b] = np.mean(fc[mask])
+                                        else:
+                                            heatmap_matrix[i, b] = np.nan
+                                scan_bar.progress((i + 1) / n_concs)
+                            scan_bar.empty()
+                            
+                            # Store Result AND Params
+                            st.session_state.heatmap_data = {
+                                "conc_grid": conc_grid,
+                                "vol_centers": vol_centers,
+                                "matrix": heatmap_matrix
+                            }
+                            st.session_state.heatmap_params = data["params"].copy()
+                            st.rerun()
+
+                    # 4. Display Plot
+                    if has_data:
                         hd = st.session_state.heatmap_data
                         p = plot_heatmap(hd["conc_grid"], hd["vol_centers"], hd["matrix"])
+                        if p:
+                            streamlit_bokeh(p, use_container_width=True)
                 
-                if p is not None and not isinstance(p, (str, type(None))):
+                # --- RENDER OTHER PLOTS ---
+                elif p is not None and not isinstance(p, (str, type(None))):
                     streamlit_bokeh(p, use_container_width=True)
 
     with tab_hist:
