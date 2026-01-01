@@ -28,7 +28,7 @@ PLOT_OPTIONS = [
     "Antibiotic Dynamics",
     "Density Dynamics",
     "Bound Antibiotic",
-    "Initial Growth/Death Landscape (t=0)" # <--- NEW OPTION
+    "Growth/Death Landscape (Binned)" # <--- UPDATED NAME
 ]
 
 # ==========================================
@@ -489,101 +489,87 @@ def run_simulation(vols, initial_biomass, total_vols_range, params):
 def int_to_superscript(n):
     return str(n).translate(str.maketrans('0123456789-', '⁰¹²³⁴⁵⁶⁷⁸⁹⁻'))
 
-def plot_initial_landscape(vols, initial_biomass, params):
-    # 1. Prepare Data: Calculate Density
-    density = initial_biomass / vols
-    
-    # Constants
-    S0 = params['S0']
-    Ks = params['Ks']
-    mu_max = params['mu_max']
-    mu_val = mu_max * S0 / (Ks + S0) # Constant at t=0
-    
-    # 2. Calculate Lambda (Lysis) based on Model
-    model = params['model']
-    lambdas = np.zeros_like(density)
-    
-    if model == "Linear Lysis Rate":
-        # Linear Model: Lambda depends on A0, not density directly
-        a = params.get('a', 0)
-        b = params.get('b', 0)
-        K_A0 = params.get('K_A0', 1.0)
-        n = params.get('n_hill', 1.0)
-        A0 = params['A0']
+def plot_landscape_binned(bin_edges, bin_counts, net_rate_bin_sums, time_point_str):
+    """
+    Plots a single point per bin representing the mean Net Growth Rate.
+    time_point_str: 'Start (t=0)' or 'End (t=Final)'
+    """
+    # 1. Determine time index based on user selection
+    if time_point_str == 'Start (t=0)':
+        t_idx = 0
+    else:
+        t_idx = -1  # The last column in the simulation data
         
-        # Hill function for A0
-        A0_n = np.power(A0, n)
-        term_A0 = A0_n / (K_A0**n + A0_n + 1e-12)
-        lambdas[:] = a * term_A0 * mu_val + b
+    # 2. Prepare lists for plotting
+    x_vals = []
+    y_vals = []
+    colors = []
+    sizes = []
+    counts_list = []
+    
+    # 3. Iterate through bins to calculate means
+    for i in range(len(bin_counts)):
+        if bin_counts[i] > 0:
+            # X-axis: Geometric mean of the bin edges (center of the log bin)
+            low_edge = bin_edges[i]
+            high_edge = bin_edges[i+1]
+            # 10 to the power of the average of the logs
+            center_vol = 10 ** ((np.log10(low_edge) + np.log10(high_edge)) / 2.0)
+            
+            # Y-axis: Average Net Rate for this bin at specific time t_idx
+            # net_rate_bin_sums is shape (n_bins, n_steps)
+            avg_rate = net_rate_bin_sums[i, t_idx] / bin_counts[i]
+            
+            x_vals.append(center_vol)
+            y_vals.append(avg_rate)
+            counts_list.append(int(bin_counts[i]))
+            
+            # Color logic
+            if avg_rate > 0:
+                colors.append('#1f77b4') # Blue for Growth
+            else:
+                colors.append('#d62728') # Red for Death
+                
+            # Optional: Scale size by log of count (min size 6, max size 20)
+            sizes.append(6 + np.log10(bin_counts[i])*2)
 
-    elif model in ["Effective Concentration", "Combined Model"]:
-        # Complex Models: Lambda depends on A_eff (which depends on Density)
-        K_on = params.get('K_on', 1.0)
-        K_off = params.get('K_off', 1.0)
-        K_D = params.get('K_D', 1.0)
-        n = params.get('n_hill', 1.0)
-        A0 = params['A0']
-        lambda_max = params.get('lambda_max', 1.0) # For Eff Conc model
-        a = params.get('a', 0) # For Combined
-        b = params.get('b', 0) # For Combined
-        
-        # Calculate Equilibrium A_bound and A_eff
-        # A_eff = A_total / ( (K_off/K_on) + Density )
-        K_eq = K_off / K_on if K_on > 0 else 1e9
-        A_eff = A0 / (K_eq + density)
-        
-        # Hill Function
-        A_eff_n = np.power(A_eff, n)
-        hill_term = A_eff_n / (K_D**n + A_eff_n + 1e-12)
-        
-        if model == "Effective Concentration":
-            lambdas = lambda_max * hill_term
-        else: # Combined Model
-            lambdas = a * hill_term * mu_val + b
-
-    # 3. Calculate Net Rate
-    net_rate = mu_val - lambdas
-    
-    # 4. Plotting
-    # Create DataFrame for Bokeh
-    df = pd.DataFrame({
-        'Volume': vols,
-        'NetRate': net_rate,
-        'Density': density,
-        'Status': np.where(net_rate > 0, 'Growth', 'Death')
+    # 4. Create DataSource
+    source = ColumnDataSource(data={
+        'Volume': x_vals,
+        'NetRate': y_vals,
+        'Color': colors,
+        'Size': sizes,
+        'Count': counts_list
     })
-    
-    # Colors: Blue for Growth, Red for Death
-    color_map = {'Growth': '#1f77b4', 'Death': '#d62728'}
-    df['Color'] = df['Status'].map(color_map)
 
-    source = ColumnDataSource(df)
-
+    # 5. Build Figure
     p = figure(
-        title=f"Initial Growth/Death Landscape (A0 = {params['A0']})",
+        title=f"Growth/Death Landscape: {time_point_str}",
         x_axis_label="Droplet Volume (µm³)",
-        y_axis_label="Net Growth Rate (μ - λ) at t=0",
+        y_axis_label="Mean Net Growth Rate (μ - λ)",
         x_axis_type="log",
         width=1200, height=800,
         tools="pan,wheel_zoom,box_zoom,reset,save"
     )
     
-    # Add Zero Line (The Boundary)
+    # Zero line
     p.add_layout(Span(location=0, dimension='width', line_color='black', line_dash='dashed', line_width=2))
 
     # Scatter points
-    r = p.scatter('Volume', 'NetRate', source=source, color='Color', size=6, alpha=0.6)
+    r = p.scatter('Volume', 'NetRate', source=source, color='Color', size='Size', alpha=0.8)
     
-    # Add Hover
+    # Connect them with a line to see the trend easier
+    p.line(x_vals, y_vals, color="gray", alpha=0.4, line_width=2)
+
+    # Hover tool
     hover = HoverTool(renderers=[r], tooltips=[
-        ("Volume", "@Volume{0,0}"),
-        ("Net Rate", "@NetRate{0.000}"),
-        ("Status", "@Status"),
-        ("Density", "@Density{0.00e0}")
+        ("Bin Center", "@Volume{0,0}"),
+        ("Mean Rate", "@NetRate{0.0000}"),
+        ("Droplets in Bin", "@Count")
     ])
     p.add_tools(hover)
     
-    # Font Sizes
+    # Styling
     p.xaxis.axis_label_text_font_size = "16pt"
     p.yaxis.axis_label_text_font_size = "16pt"
     p.title.text_font_size = "18pt"
@@ -1001,8 +987,9 @@ def main():
                         p = None
                     else:
                         p = plot_abound_dynamics(t_eval, a_bound_bin_sums, bin_counts, bin_edges)
-                elif selected_plot == PLOT_OPTIONS[10]: # Initial Growth/Death Landscape (t=0)
-                     p = plot_initial_landscape(data["vols"], data["initial_biomass"], data["params"])
+                elif selected_plot == PLOT_OPTIONS[10]: # Growth/Death Landscape (Binned)
+                    time_choice = st.radio("Select Time Point:", ["Start (t=0)", "End (t=Final)"], horizontal=True)
+                    p = plot_landscape_binned(bin_edges, bin_counts, net_rate_bin_sums, time_choice)
                 
                 if p is not None and not isinstance(p, (str, type(None))):
                     streamlit_bokeh(p, use_container_width=True)
