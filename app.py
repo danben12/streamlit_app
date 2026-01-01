@@ -3,7 +3,8 @@ import numpy as np
 import pandas as pd
 from scipy.integrate import odeint
 from bokeh.plotting import figure
-from bokeh.models import ColumnDataSource, HoverTool, Legend, LegendItem, Span, Div
+from bokeh.models import ColumnDataSource, HoverTool, Legend, LegendItem, Span, Div, ColorBar
+from bokeh.transform import linear_cmap
 from bokeh.palettes import linear_palette
 import colorcet as cc
 from streamlit_bokeh import streamlit_bokeh
@@ -28,7 +29,7 @@ PLOT_OPTIONS = [
     "Antibiotic Dynamics",
     "Density Dynamics",
     "Bound Antibiotic",
-    "Growth/Death Landscape (Delta)" 
+    "Growth/Death Heatmap"  # <--- REPLACED
 ]
 
 # ==========================================
@@ -489,83 +490,59 @@ def run_simulation(vols, initial_biomass, total_vols_range, params):
 def int_to_superscript(n):
     return str(n).translate(str.maketrans('0123456789-', '⁰¹²³⁴⁵⁶⁷⁸⁹⁻'))
 
-def plot_landscape_delta_only(bin_edges, bin_counts, net_rate_bin_sums):
+def plot_heatmap(conc_grid, vol_centers, data_matrix):
     """
-    Plots ONLY the Delta: (Mean Rate at End) - (Mean Rate at Start)
+    Plots a 2D Heatmap of Fold Change.
+    X: Volume (Log), Y: Concentration, Color: Fold Change
     """
-    # 1. Setup Labels
-    y_axis_label = "Δ Net Growth Rate ((μ-λ)End - (μ-λ)Start)"
-    title_suffix = "Change in Growth Potential (End - Start)"
+    x_list = []
+    y_list = []
+    c_list = []
+    w = (np.log10(vol_centers.max()) - np.log10(vol_centers.min())) / len(vol_centers)
+    h = (conc_grid[1] - conc_grid[0]) if len(conc_grid) > 1 else 1.0
 
-    # 2. Prepare lists for plotting
-    x_vals = []
-    y_vals = []
-    colors = []
-    sizes = []
-    counts_list = []
-    
-    # 3. Iterate through bins
-    for i in range(len(bin_counts)):
-        if bin_counts[i] > 0:
-            # X-axis: Geometric mean of the bin edges
-            low_edge = bin_edges[i]
-            high_edge = bin_edges[i+1]
-            center_vol = 10 ** ((np.log10(low_edge) + np.log10(high_edge)) / 2.0)
-            
-            # Y-axis Calculation
-            rate_start = net_rate_bin_sums[i, 0] / bin_counts[i]
-            rate_end   = net_rate_bin_sums[i, -1] / bin_counts[i]
-            
-            # Delta calculation
-            val = rate_end - rate_start
-            
-            x_vals.append(center_vol)
-            y_vals.append(val)
-            counts_list.append(int(bin_counts[i]))
-            
-            # Color logic: Blue = Positive (Improvement), Red = Negative (Worsening)
-            if val >= 0:
-                colors.append('#1f77b4') # Blue
-            else:
-                colors.append('#d62728') # Red
-                
-            sizes.append(6 + np.log10(bin_counts[i])*2)
+    for i, conc in enumerate(conc_grid):
+        for j, vol in enumerate(vol_centers):
+            val = data_matrix[i, j]
+            if not np.isnan(val):
+                x_list.append(np.log10(vol))
+                y_list.append(conc)
+                c_list.append(val)
 
-    # 4. Create DataSource
     source = ColumnDataSource(data={
-        'Volume': x_vals,
-        'Value': y_vals,
-        'Color': colors,
-        'Size': sizes,
-        'Count': counts_list
+        'x': x_list, 'y': y_list, 'fc': c_list, 
+        'vol': 10**np.array(x_list)
     })
 
-    # 5. Build Figure
+    mapper = linear_cmap(field_name='fc', palette=cc.CET_D1[::-1], low=-5, high=5)
+
     p = figure(
-        title=f"Growth/Death Landscape: {title_suffix}",
-        x_axis_label="Droplet Volume (µm³)",
-        y_axis_label=y_axis_label,
-        x_axis_type="log",
+        title="Survival Landscape: Volume vs Antibiotic Dose",
+        x_axis_label="Volume (Log10 µm³)", 
+        y_axis_label="Antibiotic Concentration (µg/ml)",
         width=1200, height=800,
-        tools="pan,wheel_zoom,box_zoom,reset,save"
+        tools="hover,crosshair,pan,wheel_zoom,reset,save",
+        toolbar_location="above"
     )
+
+    p.rect(x='x', y='y', width=w*1.02, height=h*0.98, source=source,
+           fill_color=mapper, line_color=None)
+
+    color_bar = ColorBar(color_mapper=mapper['transform'], width=8, location=(0,0),
+                         title="Log2 FC")
+    p.add_layout(color_bar, 'right')
+
+    hover = p.select(dict(type=HoverTool))
+    hover.tooltips = [
+        ("Conc", "@y{0.0} µg/ml"),
+        ("Vol", "@vol{0,0} µm³"),
+        ("Fold Change", "@fc{0.00}")
+    ]
     
-    p.add_layout(Span(location=0, dimension='width', line_color='black', line_dash='dashed', line_width=2))
-
-    r = p.scatter('Volume', 'Value', source=source, color='Color', size='Size', alpha=0.8)
-    p.line(x_vals, y_vals, color="gray", alpha=0.4, line_width=2)
-
-    hover = HoverTool(renderers=[r], tooltips=[
-        ("Bin Center", "@Volume{0,0}"),
-        ("Delta Value", "@Value{0.0000}"),
-        ("Droplets", "@Count")
-    ])
-    p.add_tools(hover)
+    p.xaxis.major_label_overrides = {
+        int(i): f"10^{int(i)}" for i in range(10)
+    }
     
-    p.xaxis.axis_label_text_font_size = "16pt"
-    p.yaxis.axis_label_text_font_size = "16pt"
-    p.title.text_font_size = "18pt"
-
     return p
 
 def plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges):
@@ -885,6 +862,8 @@ def main():
 
     if should_run:
         st.session_state.trigger_run = False 
+        st.session_state.heatmap_data = None # Clear old heatmap data if parameters change
+        
         with st.spinner("Running simulation..."):
             vols, counts, initial_biomass, total_vols = generate_population(
                 params['mean_log10'], params['std_log10'], params['n_samples'],
@@ -976,8 +955,60 @@ def main():
                         p = None
                     else:
                         p = plot_abound_dynamics(t_eval, a_bound_bin_sums, bin_counts, bin_edges)
-                elif selected_plot == PLOT_OPTIONS[10]: # Growth/Death Landscape (Delta)
-                    p = plot_landscape_delta_only(bin_edges, bin_counts, net_rate_bin_sums)
+                        
+                elif selected_plot == PLOT_OPTIONS[10]: # Growth/Death Heatmap
+                    # -------------------------------------------------------------
+                    # CUSTOM LOGIC FOR HEATMAP GENERATION INSIDE PLOT AREA
+                    # -------------------------------------------------------------
+                    if st.session_state.get("heatmap_data") is None:
+                        st.warning("Heatmap data not generated for current settings.")
+                        if st.button("Run Heatmap Scan (0-40 µg/ml)", type="primary"):
+                            with st.spinner("Scanning 20 concentrations..."):
+                                # 1. Reuse existing population from current sim results
+                                vols = data["vols"]
+                                initial_biomass = data["initial_biomass"]
+                                total_vols_range = (data["total_vols"].min(), data["total_vols"].max())
+                                
+                                # 2. Setup Grid
+                                n_concs = 20
+                                max_conc = 40.0
+                                conc_grid = np.linspace(0, max_conc, n_concs)
+                                n_vol_bins = 50
+                                min_exp, max_exp = np.floor(np.log10(vols.min())), np.ceil(np.log10(vols.max()))
+                                vol_bins = np.logspace(min_exp, max_exp, n_vol_bins + 1)
+                                vol_centers = np.sqrt(vol_bins[:-1] * vol_bins[1:]) 
+                                heatmap_matrix = np.zeros((n_concs, n_vol_bins))
+                                
+                                # 3. Run Loop
+                                scan_bar = st.progress(0, text="Scanning...")
+                                for i, c_val in enumerate(conc_grid):
+                                    temp_params = data["params"].copy()
+                                    temp_params['A0'] = c_val
+                                    sim_out = run_simulation(vols, initial_biomass, total_vols_range, temp_params)
+                                    if sim_out:
+                                        final_biomass_run = sim_out[2]
+                                        with np.errstate(divide='ignore', invalid='ignore'):
+                                            fc = np.log2(final_biomass_run / initial_biomass)
+                                        fc = np.nan_to_num(fc, nan=-6.0, posinf=6.0, neginf=-6.0)
+                                        indices = np.digitize(vols, vol_bins) - 1
+                                        for b in range(n_vol_bins):
+                                            mask = indices == b
+                                            if np.any(mask):
+                                                heatmap_matrix[i, b] = np.mean(fc[mask])
+                                            else:
+                                                heatmap_matrix[i, b] = np.nan
+                                    scan_bar.progress((i + 1) / n_concs)
+                                scan_bar.empty()
+                                
+                                st.session_state.heatmap_data = {
+                                    "conc_grid": conc_grid,
+                                    "vol_centers": vol_centers,
+                                    "matrix": heatmap_matrix
+                                }
+                                st.rerun()
+                    else:
+                        hd = st.session_state.heatmap_data
+                        p = plot_heatmap(hd["conc_grid"], hd["vol_centers"], hd["matrix"])
                 
                 if p is not None and not isinstance(p, (str, type(None))):
                     streamlit_bokeh(p, use_container_width=True)
