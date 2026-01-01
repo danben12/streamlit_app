@@ -18,27 +18,47 @@ from numba import njit, prange
 # ==========================================
 # 0. GLOBAL CONSTANTS
 # ==========================================
-PLOT_OPTIONS = [
-    "Population Dynamics",
-    "Droplet Distribution",
-    "Initial Density & Vc",
-    "Fold Change",
-    "N0 vs Volume",
-    "Net Growth Rate (μ - λ)",
-    "Substrate Dynamics",
-    "Antibiotic Dynamics",
-    "Density Dynamics",
-    "Bound Antibiotic",
-    "Growth/Death Heatmap"
-]
+PLOT_OPTIONS = {
+    "Population Dynamics": "Tracks the normalized biomass (B/B₀) over time for different volume bins.",
+    "Droplet Distribution": "Histogram comparing total droplet sizes vs. occupied droplet sizes.",
+    "Initial Density & Vc": "Scatter plot of initial bacterial density vs volume, identifying the Critical Volume (Vc).",
+    "Fold Change": "Log2 Fold Change of biomass (Final/Initial) vs Volume.",
+    "N0 vs Volume": "Initial biomass (N0) plotted against Droplet Volume.",
+    "Net Growth Rate (μ - λ)": "The net growth rate (Growth μ - Lysis λ) over time.",
+    "Substrate Dynamics": "Depletion of substrate (S) over time.",
+    "Antibiotic Dynamics": "Effective antibiotic concentration (free or bound) over time.",
+    "Density Dynamics": "Bacterial density (Biomass/Volume) evolution over time.",
+    "Bound Antibiotic": "Number of antibiotic molecules bound per droplet over time.",
+    "Growth/Death Heatmap": "Landscape of survival (Fold Change) across Volume and Antibiotic Concentration."
+}
+
+PLOT_LIST = list(PLOT_OPTIONS.keys())
 
 # ==========================================
 # 1. PAGE CONFIG
 # ==========================================
 
 def configure_page():
-    st.set_page_config(page_title="Growth - Lysis Model simulation", layout="wide")
-    st.title("Growth - Lysis Model simulation")
+    st.set_page_config(
+        page_title="μ-SPLASH Simulation", 
+        page_icon="🦠",
+        layout="wide",
+        initial_sidebar_state="expanded"
+    )
+    # Custom CSS for better headers and spacing
+    st.markdown("""
+        <style>
+        .block-container {padding-top: 2rem;}
+        h1 {margin-bottom: 0rem;}
+        div[data-testid="stMetric"] {
+            background-color: #f0f2f6;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+    st.title("🦠 Growth-Lysis Micro-droplet Simulation")
+    st.markdown("---")
 
 # ==========================================
 # 2. ODE MATH MODELS
@@ -139,68 +159,79 @@ def on_rerun_click():
             st.session_state.trigger_run = True
 
 # ==========================================
-# 4. UI COMPONENTS
+# 4. UI COMPONENTS (SIDEBAR)
 # ==========================================
 
 def render_sidebar():
-    st.sidebar.header("Simulation Settings")
+    st.sidebar.header("⚙️ Configuration")
     params = {}
 
+    # Model Selector
     params['model'] = st.sidebar.selectbox(
-        "Select Model", 
+        "Mathematical Model", 
         ["Effective Concentration", "Linear Lysis Rate", "Combined Model"], 
         key='model_select'
     )
 
-    st.sidebar.subheader("Time Settings")
-    col1, col2, col3 = st.sidebar.columns(3)
-    
-    params['t_start'] = col1.number_input("Start (h)", value=st.session_state.get('t_start', 0.0), step=1.0, key='t_start')
-    params['t_end'] = col2.number_input("End (h)", value=st.session_state.get('t_end', 24.0), step=1.0, key='t_end')
-    params['dt'] = col3.number_input("Step (h)", value=st.session_state.get('dt', 1.0), min_value=0.01, step=0.5, key='dt')
+    # 1. Time Settings
+    with st.sidebar.expander("⏱️ Time Settings", expanded=False):
+        col1, col2 = st.columns(2)
+        params['t_start'] = col1.number_input("Start (h)", value=st.session_state.get('t_start', 0.0), step=1.0, key='t_start')
+        params['t_end'] = col2.number_input("End (h)", value=st.session_state.get('t_end', 24.0), step=1.0, key='t_end')
+        params['dt'] = st.number_input("Step size (h)", value=st.session_state.get('dt', 1.0), min_value=0.01, step=0.5, key='dt', help="Integration time step")
 
-    st.sidebar.subheader("Population Generation")
-    params['mean_log10'] = st.sidebar.number_input("Mean Log10 Volume", 1.0, 8.0, st.session_state.get('mean_log10', 3.0), 0.1, key='mean_log10')
-    params['std_log10'] = st.sidebar.number_input("Std Dev Log10", 0.1, 3.0, st.session_state.get('std_log10', 1.2), 0.1, key='std_log10')
-    params['n_samples'] = st.sidebar.number_input("N Samples (Droplets)", 1000, 100000, st.session_state.get('n_samples', 17000), 1000, key='n_samples')
-    
-    params['conc_exp'] = st.sidebar.slider("Concentration Exp (10^x)", -7.0, -1.0, st.session_state.get('conc_exp', -4.3), 0.1, key='conc_exp')
-    params['concentration'] = 10 ** params['conc_exp']
+    # 2. Inoculum
+    with st.sidebar.expander("💧 Inoculum & Droplets", expanded=True):
+        params['n_samples'] = st.number_input("Total Droplets (N)", 1000, 100000, st.session_state.get('n_samples', 17000), 1000, key='n_samples')
+        
+        c1, c2 = st.columns(2)
+        params['mean_log10'] = c1.number_input("Mean Log10(Vol)", 1.0, 8.0, st.session_state.get('mean_log10', 3.0), 0.1, key='mean_log10')
+        params['std_log10'] = c2.number_input("Std Dev", 0.1, 3.0, st.session_state.get('std_log10', 1.2), 0.1, key='std_log10')
+        
+        params['conc_exp'] = st.slider("Inoculum Conc (10^x)", -7.0, -1.0, st.session_state.get('conc_exp', -4.3), 0.1, key='conc_exp', help="Starting bacterial concentration in the bulk mix.")
+        params['concentration'] = 10 ** params['conc_exp']
 
-    st.sidebar.subheader("Global Parameters")
-    tab1, tab2 = st.sidebar.tabs(["Growth", "Drugs/Lysis"])
+    # 3. Biology
+    with st.sidebar.expander("🧫 Bacterial Physiology", expanded=False):
+        c1, c2 = st.columns(2)
+        params['mu_max'] = c1.number_input("μ_max (1/h)", value=st.session_state.get('mu_max', 0.7), key='mu_max', help="Maximum specific growth rate")
+        params['Ks'] = c2.number_input("Ks (μg/ml)", value=st.session_state.get('Ks', 2.0), key='Ks', help="Half-saturation constant for substrate")
+        
+        c3, c4 = st.columns(2)
+        params['Y'] = c3.number_input("Yield (Y)", value=st.session_state.get('Y', 0.001), format="%.4f", key='Y', help="Biomass yield per unit substrate")
+        params['S0'] = c4.number_input("S0 (μg/ml)", value=st.session_state.get('S0', 1.0), key='S0', help="Initial substrate concentration")
 
-    with tab1:
-        params['mu_max'] = st.number_input("mu_max", value=st.session_state.get('mu_max', 0.7), key='mu_max')
-        params['Y'] = st.number_input("Yield (Y)", value=st.session_state.get('Y', 0.001), format="%.4f", key='Y')
-        params['S0'] = st.number_input("Initial S0", value=st.session_state.get('S0', 1.0), key='S0')
-        params['Ks'] = st.number_input("Ks", value=st.session_state.get('Ks', 2.0), key='Ks')
-
-    with tab2:
-        params['A0'] = st.number_input("Initial Antibiotic (A0)", value=st.session_state.get('A0', 10.0), key='A0')
+    # 4. Pharmacodynamics
+    with st.sidebar.expander("💊 Pharmacodynamics", expanded=True):
+        params['A0'] = st.number_input("Initial Antibiotic (A0) [μg/ml]", value=st.session_state.get('A0', 10.0), key='A0')
         
         defaults = ['K_on', 'K_off', 'K_D', 'n_hill', 'lambda_max', 'a', 'b', 'K_A0']
         for key in defaults: params[key] = 0.0
 
+        # Dynamic inputs based on model choice
         if params['model'] in ["Effective Concentration", "Combined Model"]:
-            params['K_on'] = st.number_input("K_on", value=st.session_state.get('K_on', 750.0), key='K_on')
-            params['K_off'] = st.number_input("K_off", value=st.session_state.get('K_off', 0.01), key='K_off')
-            params['K_D'] = st.number_input("K_D", value=st.session_state.get('K_D', 12000.0), key='K_D')
+            c1, c2 = st.columns(2)
+            params['K_on'] = c1.number_input("K_on", value=st.session_state.get('K_on', 750.0), key='K_on')
+            params['K_off'] = c2.number_input("K_off", value=st.session_state.get('K_off', 0.01), key='K_off')
+            params['K_D'] = st.number_input("K_D (Dissociation)", value=st.session_state.get('K_D', 12000.0), key='K_D')
+            
             if 'n_hill' not in st.session_state: st.session_state.n_hill = 20.0
             params['n_hill'] = st.number_input("Hill coeff (n)", value=st.session_state.get('n_hill_1', st.session_state.n_hill), key='n_hill_1')
 
         if params['model'] == "Effective Concentration":
-            params['lambda_max'] = st.number_input("lambda_max", value=st.session_state.get('lambda_max', 1.0), key='lambda_max')
+            params['lambda_max'] = st.number_input("λ_max (1/h)", value=st.session_state.get('lambda_max', 1.0), key='lambda_max', help="Maximum lysis rate")
 
         if params['model'] in ["Linear Lysis Rate", "Combined Model"]:
-            params['a'] = st.number_input("a (Growth Lysis)", value=st.session_state.get('a', 3.0), key='a')
-            params['b'] = st.number_input("b (Base Lysis)", value=st.session_state.get('b', 0.1), key='b')
+            c1, c2 = st.columns(2)
+            params['a'] = c1.number_input("Slope (a)", value=st.session_state.get('a', 3.0), key='a')
+            params['b'] = c2.number_input("Intercept (b)", value=st.session_state.get('b', 0.1), key='b')
 
         if params['model'] == "Linear Lysis Rate":
             params['K_A0'] = st.number_input("K_A0", value=st.session_state.get('K_A0', 10.0), key='K_A0')
             val_n_hill = st.session_state.get('n_hill_2', 20.0)
             params['n_hill'] = st.number_input("Hill coeff (n)", value=val_n_hill, key='n_hill_2')
 
+        # Unified n_hill storage
         if 'n_hill_1' in params: params['n_hill'] = params['n_hill_1']
         elif 'n_hill_2' in params: params['n_hill'] = params['n_hill_2']
 
@@ -852,27 +883,13 @@ def main():
     
     # 1. Render Sidebar
     params = render_sidebar()
-
-    # 2. Display Metrics
-    if st.session_state.sim_results is not None:
-        data = st.session_state.sim_results
-        n_trimmed = data["n_trimmed"]
-        N_occupied = data["N_occupied"]
-        pct = (N_occupied / n_trimmed * 100) if n_trimmed > 0 else 0.0
-        
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Total Droplets", f"{n_trimmed:,}")
-        col2.metric("Occupied", f"{N_occupied:,} ({pct:.2f}%)")
-        col3.metric("Antibiotic Conc", f"{data['params']['A0']}") 
-        st.divider()
-
-    # 3. Header and Controls
-    st.subheader("Results Analysis")
-    col_btn, _ = st.columns([2,6])
-    with col_btn:
-        manual_run = st.button("Run Simulation", type="primary")
     
-    # 4. Logic: Run Simulation
+    # 2. Controls & Actions (Top of Main Area)
+    col_btn, _ = st.columns([1,2])
+    with col_btn:
+        manual_run = st.button("🚀 Run Simulation", type="primary", use_container_width=True)
+
+    # 3. Logic: Run Simulation
     should_run = manual_run or st.session_state.trigger_run or st.session_state.sim_results is None
 
     if should_run:
@@ -880,7 +897,7 @@ def main():
         st.session_state.heatmap_data = None # Clear old heatmap data if parameters change
         
         # --- A. RUN MAIN SIMULATION ---
-        with st.spinner("Running main simulation..."):
+        with st.spinner("Processing main droplet population..."):
             vols, counts, initial_biomass, total_vols = generate_population(
                 params['mean_log10'], params['std_log10'], params['n_samples'],
                 params['concentration'], MEAN_PIXELS, STD_PIXELS
@@ -927,7 +944,7 @@ def main():
 
         # --- B. RUN HEATMAP SCAN (IMMEDIATELY AFTER) ---
         if N_occupied > 0:
-            with st.spinner("Generating Survival Landscape (Heatmap)..."):
+            with st.spinner("Calculating Survival Landscape..."):
                 # 1. Define Synthetic Volume Grid (50 Points)
                 min_log = np.log10(total_vols.min())
                 max_log = np.log10(total_vols.max())
@@ -951,7 +968,7 @@ def main():
                 vol_centers = vol_grid 
 
                 # 4. Scan Loop
-                scan_bar = st.progress(0, text="Scanning antibiotic concentrations...")
+                scan_bar = st.progress(0, text="Simulating across concentration gradients...")
                 for i, c_val in enumerate(conc_grid):
                     temp_params = params.copy()
                     temp_params['A0'] = c_val
@@ -974,20 +991,38 @@ def main():
                     "matrix": heatmap_matrix
                 }
                 st.session_state.heatmap_params = params.copy()
+                st.success("Simulation Complete!")
+
+    # 4. Display Metrics (Dashboard Style)
+    if st.session_state.sim_results is not None:
+        data = st.session_state.sim_results
+        n_trimmed = data["n_trimmed"]
+        N_occupied = data["N_occupied"]
+        pct = (N_occupied / n_trimmed * 100) if n_trimmed > 0 else 0.0
+        
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Total Droplets", f"{n_trimmed:,}")
+        c2.metric("Occupied Droplets", f"{N_occupied:,}", f"{pct:.2f}%")
+        c3.metric("Antibiotic Conc", f"{data['params']['A0']} μg/ml")
+        c4.metric("Sim Duration", f"{data['params']['t_end']} h")
+        st.markdown("---")
 
     # 5. Render Output Tabs
     data = st.session_state.sim_results
     tab_viz, tab_hist = st.tabs(["📊 Visualization", "📜 Run History"])
 
     with tab_viz:
-        selected_plot = st.selectbox(
-            "Select Figure to Display:", 
-            PLOT_OPTIONS, 
-            key="viz_plot_selection"
-        )
-        
+        c_sel, _ = st.columns([1,1])
+        with c_sel:
+            selected_plot = st.selectbox(
+                "Select Figure:", 
+                PLOT_LIST, 
+                key="viz_plot_selection"
+            )
+            st.caption(PLOT_OPTIONS[selected_plot])
+
         if data is None or data["N_occupied"] == 0:
-            st.error("No occupied droplets found. Try increasing Concentration or Mean Volume.")
+            st.info("👋 Welcome! Please configure settings in the sidebar and click **'Run Simulation'** to start.")
         else:
             (bin_sums, bin_counts, final_biomass, t_eval, bin_edges,
              a_eff_bin_sums, density_bin_sums, a_bound_bin_sums, net_rate_bin_sums, s_bin_sums) = data["sim_output"]
@@ -995,33 +1030,33 @@ def main():
             with st.container():
                 p = None
                 
-                if selected_plot == PLOT_OPTIONS[10]: # Heatmap
+                if selected_plot == "Growth/Death Heatmap": 
                     if st.session_state.get("heatmap_data"):
                         hd = st.session_state.heatmap_data
                         p = plot_heatmap(hd["conc_grid"], hd["vol_centers"], hd["matrix"])
                     else:
                         st.warning("Heatmap data unavailable. Please Run Simulation.")
 
-                elif selected_plot == PLOT_OPTIONS[0]: # Population Dynamics
+                elif selected_plot == "Population Dynamics":
                     p = plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges)
-                elif selected_plot == PLOT_OPTIONS[1]: # Droplet Distribution
+                elif selected_plot == "Droplet Distribution":
                     p = plot_distribution(data["total_vols"], data["vols"])
-                elif selected_plot == PLOT_OPTIONS[2]: # Initial Density & Vc
+                elif selected_plot == "Initial Density & Vc":
                     p = plot_initial_density_vc(data["df_density"], data["vc_val"], data["params"]['concentration'])
-                elif selected_plot == PLOT_OPTIONS[3]: # Fold Change
+                elif selected_plot == "Fold Change":
                     p, df_fc = plot_fold_change(data["vols"], data["initial_biomass"], final_biomass, data["vc_val"])
-                    st.download_button("Download CSV", data=convert_df(df_fc), file_name="fold_change_data.csv", mime="text/csv")
-                elif selected_plot == PLOT_OPTIONS[4]: # N0 vs Volume
+                    st.download_button("📥 Download CSV", data=convert_df(df_fc), file_name="fold_change_data.csv", mime="text/csv")
+                elif selected_plot == "N0 vs Volume":
                     p = plot_n0_vs_volume(data["df_density"], data["vc_val"])
-                elif selected_plot == PLOT_OPTIONS[5]: # Net Growth Rate (μ - λ)
+                elif selected_plot == "Net Growth Rate (μ - λ)":
                     p = plot_net_growth_dynamics(t_eval, net_rate_bin_sums, bin_counts, bin_edges)
-                elif selected_plot == PLOT_OPTIONS[6]: # Substrate Dynamics
+                elif selected_plot == "Substrate Dynamics":
                     p = plot_substrate_dynamics(t_eval, s_bin_sums, bin_counts, bin_edges)
-                elif selected_plot == PLOT_OPTIONS[7]: # Antibiotic Dynamics
+                elif selected_plot == "Antibiotic Dynamics":
                     p = plot_a_eff_dynamics(t_eval, a_eff_bin_sums, bin_counts, bin_edges, data["params"])
-                elif selected_plot == PLOT_OPTIONS[8]: # Density Dynamics
+                elif selected_plot == "Density Dynamics":
                     p = plot_density_dynamics(t_eval, density_bin_sums, bin_counts, bin_edges)
-                elif selected_plot == PLOT_OPTIONS[9]: # Bound Antibiotic
+                elif selected_plot == "Bound Antibiotic":
                     if data["params"]['model'] == "Linear Lysis Rate":
                         st.warning("This model does not simulate binding kinetics.")
                         p = None
@@ -1052,10 +1087,11 @@ def main():
                 selection_mode="single-row"
             )
             
+            c1, c2 = st.columns([1, 4])
             if selection.selection.rows:
-                st.button("🔄 Rerun Selected Configuration", type="primary", on_click=on_rerun_click)
+                c1.button("🔄 Rerun Selected", type="primary", on_click=on_rerun_click)
             
-            if st.button("Clear History", type="secondary"):
+            if c2.button("Clear History", type="secondary"):
                 st.session_state.run_history = []
                 st.rerun()
         else:
