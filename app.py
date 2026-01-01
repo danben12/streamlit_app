@@ -446,13 +446,8 @@ def _compute_simulation_core(vols, initial_biomass, total_vols_range, params):
     total_bin_counts = np.zeros(n_bins)
     final_counts_all = np.zeros(N_occupied)
 
-    # Progress bar for the main simulation only if not running inside the heatmap loop (optional check could be added)
-    # But for simplicity we use one here.
-    # Note: If called 20 times for heatmap, this might flicker. 
-    # To fix this, we can make the progress bar optional or use a global one.
-    # For now, we leave it as is, or we could suppress it if N_occupied is small (heatmap uses N=50).
-    
-    show_progress = (N_occupied > 100) # Only show droplet-level progress for large sims
+    # Progress bar only if a large simulation is running
+    show_progress = (N_occupied > 100)
     if show_progress:
         progress_bar = st.progress(0, text="Initializing parallel simulation...")
     
@@ -549,9 +544,6 @@ def plot_heatmap(conc_grid, vol_centers, data_matrix):
         ("Fold Change", "@fc{0.00}")
     ]
     
-    # -------------------------------------------------------------
-    # SUPERSCRIPT FIX FOR HEATMAP X-AXIS
-    # -------------------------------------------------------------
     overrides = {}
     for i in range(15): # Cover range 10^0 to 10^15
         overrides[i] = f"10{int_to_superscript(i)}"
@@ -932,11 +924,12 @@ def main():
                 max_log = np.log10(total_vols.max())
                 vol_grid = np.logspace(min_log, max_log, 50) 
                 
-                # 2. Define Idealized Biomass
+                # 2. Define Idealized Biomass (Corrected for Occupied State)
                 conc_for_generation = params["concentration"] 
-                expected_counts = vol_grid * conc_for_generation
+                # FIX: Force minimum counts to 1.0 to simulate OCCUPIED droplets only.
+                # This aligns the Heatmap with the Main Simulation which filters out empty droplets.
+                expected_counts = np.maximum(vol_grid * conc_for_generation, 1.0)
                 init_biomass_grid = expected_counts * MEAN_PIXELS
-                init_biomass_grid = np.maximum(init_biomass_grid, 1.0)
                 
                 # 3. Define Concentration Grid
                 n_concs = 20
