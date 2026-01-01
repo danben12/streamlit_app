@@ -45,16 +45,11 @@ def configure_page():
         layout="wide",
         initial_sidebar_state="expanded"
     )
-    # Custom CSS for better headers and spacing
+    # --- CSS FIX: Removed hardcoded light background for metrics to fix Dark Mode readability ---
     st.markdown("""
         <style>
         .block-container {padding-top: 2rem;}
         h1 {margin-bottom: 0rem;}
-        div[data-testid="stMetric"] {
-            background-color: #f0f2f6;
-            padding: 10px;
-            border-radius: 5px;
-        }
         </style>
     """, unsafe_allow_html=True)
     st.title("🦠 Growth-Lysis Micro-droplet Simulation")
@@ -528,39 +523,27 @@ def int_to_superscript(n):
 
 def plot_heatmap(conc_grid, vol_centers, data_matrix):
     """
-    Plots a 2D Heatmap of Fold Change with adaptive row heights.
+    Plots a 2D Heatmap of Fold Change with uniform row heights.
     X: Volume (Log), Y: Concentration, Color: Fold Change
     """
     x_list = []
     y_list = []
     c_list = []
-    h_list = []
     
-    # 1. Calculate boundaries to determine row heights (Adaptive Grid)
-    # Midpoints between concentration levels
-    mids = (conc_grid[:-1] + conc_grid[1:]) / 2
-    # Extend boundaries to cover the first and last points appropriately
-    lower_bound = conc_grid[0] - (mids[0] - conc_grid[0]) if len(mids) > 0 else conc_grid[0] - 0.5
-    upper_bound = conc_grid[-1] + (conc_grid[-1] - mids[-1]) if len(mids) > 0 else conc_grid[-1] + 0.5
-    boundaries = np.concatenate(([lower_bound], mids, [upper_bound]))
-    # Heights are the difference between boundaries
-    row_heights = np.diff(boundaries)
-    
-    # Width is uniform in log space
+    # Standard grid spacing
     w = (np.log10(vol_centers.max()) - np.log10(vol_centers.min())) / len(vol_centers)
+    h = (conc_grid[1] - conc_grid[0]) if len(conc_grid) > 1 else 1.0
 
     for i, conc in enumerate(conc_grid):
-        current_h = row_heights[i]
         for j, vol in enumerate(vol_centers):
             val = data_matrix[i, j]
             if not np.isnan(val):
                 x_list.append(np.log10(vol))
                 y_list.append(conc)
                 c_list.append(val)
-                h_list.append(current_h)
 
     source = ColumnDataSource(data={
-        'x': x_list, 'y': y_list, 'fc': c_list, 'h': h_list,
+        'x': x_list, 'y': y_list, 'fc': c_list,
         'vol': 10**np.array(x_list)
     })
 
@@ -571,13 +554,12 @@ def plot_heatmap(conc_grid, vol_centers, data_matrix):
         x_axis_label="Volume (µm³)",
         y_axis_label="Antibiotic Concentration (µg/ml)",
         width=1200, height=800,
-        # REMOVED crosshair and hover
         tools="pan,wheel_zoom,reset,save",
         toolbar_location="above"
     )
 
-    # Use adaptive height 'h' from source
-    p.rect(x='x', y='y', width=w*1.02, height='h', source=source,
+    # Uniform height
+    p.rect(x='x', y='y', width=w*1.02, height=h*0.98, source=source,
            fill_color=mapper, line_color=None)
 
     color_bar = ColorBar(color_mapper=mapper['transform'], width=8, location=(0,0),
@@ -828,7 +810,7 @@ def plot_fold_change(vols, initial_biomass, final_biomass, vc_val):
         LegendItem(label='Baseline (0)', renderers=[r_base])
     ], location='top_right')
     p.add_layout(legend, 'right')
-    return p, df_fc
+    return p
 
 def plot_n0_vs_volume(df, Vc):
     plot_df = df.copy()
@@ -884,12 +866,16 @@ def main():
     # 1. Render Sidebar
     params = render_sidebar()
     
-    # 2. Controls & Actions (Top of Main Area)
+    # 2. METRICS CONTAINER (Placeholder for Top Dashboard)
+    #    Defined here, but populated AFTER simulation logic to ensure freshness.
+    metrics_container = st.container()
+
+    # 3. CONTROLS (Button Below Metrics)
     col_btn, _ = st.columns([1,2])
     with col_btn:
         manual_run = st.button("🚀 Run Simulation", type="primary", use_container_width=True)
 
-    # 3. Logic: Run Simulation
+    # 4. Logic: Run Simulation
     should_run = manual_run or st.session_state.trigger_run or st.session_state.sim_results is None
 
     if should_run:
@@ -955,15 +941,11 @@ def main():
                 expected_counts = np.maximum(vol_grid * conc_for_generation, 1.0)
                 init_biomass_grid = expected_counts * MEAN_PIXELS
                 
-                # 3. Define Concentration Grid with MANDATORY POINTS
-                # Ensure 0, 3.3, 10, 30 are always included
-                mandatory_concs = np.array([0.0, 3.3, 10.0, 30.0])
-                base_grid = np.linspace(0, 40.0, 20)
-                conc_grid = np.unique(np.concatenate((mandatory_concs, base_grid)))
-                conc_grid.sort()
-                
-                n_concs_total = len(conc_grid)
-                heatmap_matrix = np.zeros((n_concs_total, len(vol_grid)))
+                # 3. Define Concentration Grid (Continuous/Uniform)
+                n_concs = 20
+                max_conc = 40.0
+                conc_grid = np.linspace(0, max_conc, n_concs)
+                heatmap_matrix = np.zeros((n_concs, len(vol_grid)))
                 
                 vol_centers = vol_grid 
 
@@ -982,7 +964,7 @@ def main():
                         fc = np.nan_to_num(fc, nan=-6.0, posinf=6.0, neginf=-6.0)
                         heatmap_matrix[i, :] = fc
                         
-                    scan_bar.progress((i + 1) / n_concs_total)
+                    scan_bar.progress((i + 1) / n_concs)
                 scan_bar.empty()
                 
                 st.session_state.heatmap_data = {
@@ -991,23 +973,23 @@ def main():
                     "matrix": heatmap_matrix
                 }
                 st.session_state.heatmap_params = params.copy()
-                st.success("Simulation Complete!")
 
-    # 4. Display Metrics (Dashboard Style)
+    # 5. Populate Metrics Container (With Fresh Data)
     if st.session_state.sim_results is not None:
         data = st.session_state.sim_results
         n_trimmed = data["n_trimmed"]
         N_occupied = data["N_occupied"]
         pct = (N_occupied / n_trimmed * 100) if n_trimmed > 0 else 0.0
         
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Total Droplets", f"{n_trimmed:,}")
-        c2.metric("Occupied Droplets", f"{N_occupied:,}", f"{pct:.2f}%")
-        c3.metric("Antibiotic Conc", f"{data['params']['A0']} μg/ml")
-        c4.metric("Sim Duration", f"{data['params']['t_end']} h")
-        st.markdown("---")
+        with metrics_container:
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Total Droplets", f"{n_trimmed:,}")
+            c2.metric("Occupied Droplets", f"{N_occupied:,}", f"{pct:.2f}%")
+            c3.metric("Antibiotic Conc", f"{data['params']['A0']} μg/ml")
+            c4.metric("Sim Duration", f"{data['params']['t_end']} h")
+            st.markdown("---")
 
-    # 5. Render Output Tabs
+    # 6. Render Output Tabs
     data = st.session_state.sim_results
     tab_viz, tab_hist = st.tabs(["📊 Visualization", "📜 Run History"])
 
