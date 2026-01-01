@@ -28,7 +28,7 @@ PLOT_OPTIONS = [
     "Antibiotic Dynamics",
     "Density Dynamics",
     "Bound Antibiotic",
-    "Growth/Death Landscape (Delta)" # <--- RENAMED
+    "Growth/Death Landscape (Delta)" 
 ]
 
 # ==========================================
@@ -256,7 +256,7 @@ def calculate_vc_and_density(vols, biomass, theoretical_conc, mean_pix):
 
 @njit(cache=True, fastmath=True)
 def calculate_batch_lambda(sol_reshaped, t_eval, vols, model_type_int,
-                           mu_max, Ks, K_D, n_hill, lambda_max, A0, K_A0, a, b):
+                            mu_max, Ks, K_D, n_hill, lambda_max, A0, K_A0, a, b):
     if model_type_int == 1:
         S = sol_reshaped[:, :, 2]
     else:
@@ -858,9 +858,6 @@ def main():
     if "run_history" not in st.session_state: st.session_state.run_history = []
     if "trigger_run" not in st.session_state: st.session_state.trigger_run = False
     
-    # --- FIXED: Use INDEX to manage plot selection persistence manually ---
-    if "plot_index" not in st.session_state: st.session_state.plot_index = 0
-
     # 1. Render Sidebar
     params = render_sidebar()
 
@@ -923,7 +920,7 @@ def main():
                         if key not in relevant: row[key] = None 
 
                     if not st.session_state.run_history or row['Timestamp'] != st.session_state.run_history[0].get('Timestamp'):
-                         st.session_state.run_history.insert(0, row)
+                          st.session_state.run_history.insert(0, row)
                     if len(st.session_state.run_history) > 20:
                         st.session_state.run_history = st.session_state.run_history[:20]
 
@@ -939,13 +936,15 @@ def main():
     tab_viz, tab_hist = st.tabs(["📊 Visualization", "📜 Run History"])
 
     with tab_viz:
-        current_idx = st.session_state.plot_index
-        selected_plot = st.selectbox("Select Figure to Display:", PLOT_OPTIONS, index=current_idx)
+        # ==============================================================================
+        # FIX: Replaced manual index management with a simple key for state persistence
+        # ==============================================================================
+        selected_plot = st.selectbox(
+            "Select Figure to Display:", 
+            PLOT_OPTIONS, 
+            key="viz_plot_selection"
+        )
         
-        new_idx = PLOT_OPTIONS.index(selected_plot)
-        if new_idx != st.session_state.plot_index:
-            st.session_state.plot_index = new_idx
-
         if data is None or data["N_occupied"] == 0:
             st.error("No occupied droplets found. Try increasing Concentration or Mean Volume.")
         else:
