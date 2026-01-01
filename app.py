@@ -257,7 +257,7 @@ def calculate_vc_and_density(vols, biomass, theoretical_conc, mean_pix):
 
 @njit(cache=True, fastmath=True)
 def calculate_batch_lambda(sol_reshaped, t_eval, vols, model_type_int,
-                            mu_max, Ks, K_D, n_hill, lambda_max, A0, K_A0, a, b):
+                           mu_max, Ks, K_D, n_hill, lambda_max, A0, K_A0, a, b):
     if model_type_int == 1:
         S = sol_reshaped[:, :, 2]
     else:
@@ -446,7 +446,16 @@ def _compute_simulation_core(vols, initial_biomass, total_vols_range, params):
     total_bin_counts = np.zeros(n_bins)
     final_counts_all = np.zeros(N_occupied)
 
-    progress_bar = st.progress(0, text="Initializing parallel simulation...")
+    # Progress bar for the main simulation only if not running inside the heatmap loop (optional check could be added)
+    # But for simplicity we use one here.
+    # Note: If called 20 times for heatmap, this might flicker. 
+    # To fix this, we can make the progress bar optional or use a global one.
+    # For now, we leave it as is, or we could suppress it if N_occupied is small (heatmap uses N=50).
+    
+    show_progress = (N_occupied > 100) # Only show droplet-level progress for large sims
+    if show_progress:
+        progress_bar = st.progress(0, text="Initializing parallel simulation...")
+    
     start_time = time.time()
     
     with ThreadPoolExecutor() as executor:
@@ -468,15 +477,16 @@ def _compute_simulation_core(vols, initial_biomass, total_vols_range, params):
                 total_net_rate += l_net
                 total_s_sums += l_s
                 completed_count += 1
-                if completed_count % 50 == 0 or completed_count == N_occupied:
+                if show_progress and (completed_count % 50 == 0 or completed_count == N_occupied):
                     elapsed_sec = time.time() - start_time
                     prog_val = min(completed_count / N_occupied, 1.0)
                     progress_bar.progress(prog_val, text=f"Droplet {completed_count}/{N_occupied} processed")
             except Exception as e:
                 st.error(f"Simulation failed for droplet: {e}")
-                progress_bar.empty()
+                if show_progress: progress_bar.empty()
                 return None
-    progress_bar.empty()
+    
+    if show_progress: progress_bar.empty()
     return (total_bin_sums, total_bin_counts, final_counts_all, t_eval, bin_edges,
             total_a_eff, total_density, total_a_bound, total_net_rate, total_s_sums)
 
@@ -868,7 +878,8 @@ def main():
         st.session_state.trigger_run = False 
         st.session_state.heatmap_data = None # Clear old heatmap data if parameters change
         
-        with st.spinner("Running simulation..."):
+        # --- A. RUN MAIN SIMULATION ---
+        with st.spinner("Running main simulation..."):
             vols, counts, initial_biomass, total_vols = generate_population(
                 params['mean_log10'], params['std_log10'], params['n_samples'],
                 params['concentration'], MEAN_PIXELS, STD_PIXELS
@@ -903,7 +914,7 @@ def main():
                         if key not in relevant: row[key] = None 
 
                     if not st.session_state.run_history or row['Timestamp'] != st.session_state.run_history[0].get('Timestamp'):
-                          st.session_state.run_history.insert(0, row)
+                           st.session_state.run_history.insert(0, row)
                     if len(st.session_state.run_history) > 20:
                         st.session_state.run_history = st.session_state.run_history[:20]
 
@@ -912,14 +923,59 @@ def main():
                 "total_vols": total_vols, "n_trimmed": n_trimmed, "N_occupied": N_occupied,
                 "df_density": df_density, "vc_val": vc_val, "sim_output": sim_output, "params": params
             }
-            # Note: st.rerun() removed to preserve widget state
+
+        # --- B. RUN HEATMAP SCAN (IMMEDIATELY AFTER) ---
+        if N_occupied > 0:
+            with st.spinner("Generating Survival Landscape (Heatmap)..."):
+                # 1. Define Synthetic Volume Grid (50 Points)
+                min_log = np.log10(total_vols.min())
+                max_log = np.log10(total_vols.max())
+                vol_grid = np.logspace(min_log, max_log, 50) 
+                
+                # 2. Define Idealized Biomass
+                conc_for_generation = params["concentration"] 
+                expected_counts = vol_grid * conc_for_generation
+                init_biomass_grid = expected_counts * MEAN_PIXELS
+                init_biomass_grid = np.maximum(init_biomass_grid, 1.0)
+                
+                # 3. Define Concentration Grid
+                n_concs = 20
+                max_conc = 40.0
+                conc_grid = np.linspace(0, max_conc, n_concs)
+                heatmap_matrix = np.zeros((n_concs, len(vol_grid)))
+                
+                vol_centers = vol_grid 
+
+                # 4. Scan Loop
+                scan_bar = st.progress(0, text="Scanning antibiotic concentrations...")
+                for i, c_val in enumerate(conc_grid):
+                    temp_params = params.copy()
+                    temp_params['A0'] = c_val
+                    
+                    sim_out = run_simulation(vol_grid, init_biomass_grid, (vol_grid.min(), vol_grid.max()), temp_params)
+                    
+                    if sim_out:
+                        final_biomass_run = sim_out[2]
+                        with np.errstate(divide='ignore', invalid='ignore'):
+                            fc = np.log2(final_biomass_run / init_biomass_grid)
+                        fc = np.nan_to_num(fc, nan=-6.0, posinf=6.0, neginf=-6.0)
+                        heatmap_matrix[i, :] = fc
+                        
+                    scan_bar.progress((i + 1) / n_concs)
+                scan_bar.empty()
+                
+                st.session_state.heatmap_data = {
+                    "conc_grid": conc_grid,
+                    "vol_centers": vol_centers,
+                    "matrix": heatmap_matrix
+                }
+                st.session_state.heatmap_params = params.copy()
 
     # 5. Render Output Tabs
     data = st.session_state.sim_results
     tab_viz, tab_hist = st.tabs(["📊 Visualization", "📜 Run History"])
 
     with tab_viz:
-        # Use key to persist selection across runs
         selected_plot = st.selectbox(
             "Select Figure to Display:", 
             PLOT_OPTIONS, 
@@ -935,8 +991,14 @@ def main():
             with st.container():
                 p = None
                 
-                # --- STANDARD PLOTS ---
-                if selected_plot == PLOT_OPTIONS[0]: # Population Dynamics
+                if selected_plot == PLOT_OPTIONS[10]: # Heatmap
+                    if st.session_state.get("heatmap_data"):
+                        hd = st.session_state.heatmap_data
+                        p = plot_heatmap(hd["conc_grid"], hd["vol_centers"], hd["matrix"])
+                    else:
+                        st.warning("Heatmap data unavailable. Please Run Simulation.")
+
+                elif selected_plot == PLOT_OPTIONS[0]: # Population Dynamics
                     p = plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges)
                 elif selected_plot == PLOT_OPTIONS[1]: # Droplet Distribution
                     p = plot_distribution(data["total_vols"], data["vols"])
@@ -961,103 +1023,9 @@ def main():
                         p = None
                     else:
                         p = plot_abound_dynamics(t_eval, a_bound_bin_sums, bin_counts, bin_edges)
-                        
-                # --- HEATMAP LOGIC (FAST RERUN) ---
-                elif selected_plot == PLOT_OPTIONS[10]: 
-                    
-                    # 1. Check if current params match stored heatmap params
-                    current_params_clean = {k: v for k, v in data["params"].items() if k != 'A0'} 
-                    stored_params = st.session_state.get("heatmap_params")
-                    stored_params_clean = {k: v for k, v in stored_params.items() if k != 'A0'} if stored_params else None
-                    
-                    is_stale = (stored_params_clean != current_params_clean) if stored_params else True
-                    has_data = st.session_state.get("heatmap_data") is not None
-                    
-                    # 2. UI Controls
-                    col_run, col_status = st.columns([1, 3])
-                    
-                    with col_run:
-                        btn_label = "▶️ Run Heatmap Scan" if is_stale else "🔄 Regenerate Heatmap"
-                        run_clicked = st.button(btn_label, type="primary", key="btn_heatmap_run")
-                        
-                    with col_status:
-                        if not has_data:
-                            st.info("Scan not yet run for these settings.")
-                        elif is_stale:
-                            st.warning("⚠️ Stale Data: Settings changed since last scan.")
-                        else:
-                            st.success("✅ Up to Date.")
 
-                    # 3. Execution Logic
-                    if run_clicked:
-                        with st.spinner("Scanning 20 concentrations (Instant Synthetic Grid)..."):
-                            # A. Define Synthetic Volume Grid (50 Points)
-                            min_log = np.log10(data["total_vols"].min())
-                            max_log = np.log10(data["total_vols"].max())
-                            # Create 50 evenly spaced points in Log space
-                            vol_grid = np.logspace(min_log, max_log, 50) 
-                            
-                            # B. Define Idealized Biomass for these volumes
-                            # Expected count = Volume * Concentration
-                            # Expected biomass = Count * Mean_Pixels
-                            conc_for_generation = data["params"]["concentration"] 
-                            expected_counts = vol_grid * conc_for_generation
-                            init_biomass_grid = expected_counts * MEAN_PIXELS
-                            # Ensure numerical stability (no zero biomass)
-                            init_biomass_grid = np.maximum(init_biomass_grid, 1.0)
-                            
-                            # C. Define Heatmap Grid (Concentrations)
-                            n_concs = 20
-                            max_conc = 40.0
-                            conc_grid = np.linspace(0, max_conc, n_concs)
-                            heatmap_matrix = np.zeros((n_concs, len(vol_grid)))
-                            
-                            # D. Run Loop (1 Simulation per row = 50 droplets total per row)
-                            scan_bar = st.progress(0, text="Scanning...")
-                            
-                            # We just need bin centers for plotting, which ARE the vol_grid points
-                            vol_centers = vol_grid 
-
-                            for i, c_val in enumerate(conc_grid):
-                                temp_params = data["params"].copy()
-                                temp_params['A0'] = c_val
-                                
-                                # Run Sim on our synthetic 50 droplets
-                                # This returns (sums, counts, final_biomass_all, ...)
-                                sim_out = run_simulation(vol_grid, init_biomass_grid, (vol_grid.min(), vol_grid.max()), temp_params)
-                                
-                                if sim_out:
-                                    final_biomass_run = sim_out[2] # This is array of length 50
-                                    
-                                    with np.errstate(divide='ignore', invalid='ignore'):
-                                        fc = np.log2(final_biomass_run / init_biomass_grid)
-                                    fc = np.nan_to_num(fc, nan=-6.0, posinf=6.0, neginf=-6.0)
-                                    
-                                    # Since we simulated exactly the points we want to plot, 
-                                    # the result maps 1:1 to the matrix row. No binning needed.
-                                    heatmap_matrix[i, :] = fc
-                                    
-                                scan_bar.progress((i + 1) / n_concs)
-                            scan_bar.empty()
-                            
-                            # Store Result AND Params
-                            st.session_state.heatmap_data = {
-                                "conc_grid": conc_grid,
-                                "vol_centers": vol_centers,
-                                "matrix": heatmap_matrix
-                            }
-                            st.session_state.heatmap_params = data["params"].copy()
-                            st.rerun()
-
-                    # 4. Display Plot
-                    if has_data:
-                        hd = st.session_state.heatmap_data
-                        p = plot_heatmap(hd["conc_grid"], hd["vol_centers"], hd["matrix"])
-                        if p:
-                            streamlit_bokeh(p, use_container_width=True)
-                
-                # --- RENDER OTHER PLOTS ---
-                elif p is not None and not isinstance(p, (str, type(None))):
+                # --- RENDER ALL PLOTS HERE ---
+                if p is not None:
                     streamlit_bokeh(p, use_container_width=True)
 
     with tab_hist:
