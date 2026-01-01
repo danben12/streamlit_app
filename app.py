@@ -136,7 +136,6 @@ def load_params_from_history(row):
         'n_hill': 'n_hill_1', 
         'lambda_max': 'lambda_max',
         'a': 'a', 'b': 'b', 'K_A0': 'K_A0'
-        # 'mic_threshold' removed from history loading since it's hardcoded
     }
     for col, state_key in mapping.items():
         if col in row and row[col] is not None:
@@ -171,7 +170,7 @@ def on_clear_baseline():
     st.toast("Baseline Cleared.", icon="🧹")
 
 # ==========================================
-# 4. EQUATION LAB (IMPROVED & DEPTH)
+# 4. EQUATION LAB (Separate Page)
 # ==========================================
 def render_equation_lab_page():
     st.title("📐 Equation Lab")
@@ -242,15 +241,14 @@ def render_equation_lab_page():
 # ==========================================
 
 def render_sidebar():
-    # --- NAVIGATION (Top Level) ---
-    st.sidebar.title("Navigation")
-    app_mode = st.sidebar.radio("Go to:", ["🚀 Simulator", "📐 Equation Lab"], horizontal=True, label_visibility="collapsed")
-    st.sidebar.markdown("---")
-
+    st.sidebar.header("⚙️ Configuration")
+    
+    # --- NAVIGATION (Reverted to Selectbox) ---
+    app_mode = st.sidebar.selectbox("Navigation", ["Simulator", "Equation Lab"])
+    
     if app_mode == "Equation Lab":
         return None, "Equation Lab"
 
-    st.sidebar.header("⚙️ Configuration")
     params = {}
 
     # Model Selector
@@ -289,8 +287,6 @@ def render_sidebar():
     with st.sidebar.expander("💊 Pharmacodynamics", expanded=True):
         params['A0'] = st.number_input("Initial Antibiotic (A0)", value=st.session_state.get('A0', 10.0), key='A0')
         
-        # --- SLIDER REMOVED HERE ---
-
         defaults = ['K_on', 'K_off', 'K_D', 'n_hill', 'lambda_max', 'a', 'b', 'K_A0']
         for key in defaults: params[key] = 0.0
 
@@ -658,7 +654,6 @@ def plot_mic_vs_volume(heatmap_data, params):
     matrix = heatmap_data['matrix']
     concs = heatmap_data['conc_grid']
     vols = heatmap_data['vol_centers']
-    # HARDCODED VALUE AS REQUESTED
     death_thresh = 0.0 
     
     mic_values = []
@@ -677,7 +672,6 @@ def plot_mic_vs_volume(heatmap_data, params):
             
     source = ColumnDataSource(data={'vol': vol_values, 'mic': mic_values})
     p = figure(
-        # Updated Title to reflect hardcoded value
         title=f"Inoculum Effect: Effective MIC vs Droplet Volume (Death Threshold FC < {death_thresh})",
         x_axis_label="Droplet Volume (µm³)",
         y_axis_label="Effective MIC (µg/ml)",
