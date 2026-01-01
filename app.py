@@ -929,16 +929,14 @@ def main():
                 "total_vols": total_vols, "n_trimmed": n_trimmed, "N_occupied": N_occupied,
                 "df_density": df_density, "vc_val": vc_val, "sim_output": sim_output, "params": params
             }
-            st.rerun()
+            # Note: st.rerun() removed to preserve widget state
 
     # 5. Render Output Tabs
     data = st.session_state.sim_results
     tab_viz, tab_hist = st.tabs(["📊 Visualization", "📜 Run History"])
 
     with tab_viz:
-        # ==============================================================================
-        # FIX: Replaced manual index management with a simple key for state persistence
-        # ==============================================================================
+        # Use key to persist selection across runs
         selected_plot = st.selectbox(
             "Select Figure to Display:", 
             PLOT_OPTIONS, 
