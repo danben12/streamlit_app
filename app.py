@@ -28,7 +28,7 @@ PLOT_OPTIONS = [
     "Antibiotic Dynamics",
     "Density Dynamics",
     "Bound Antibiotic",
-    "Growth/Death Landscape (Binned)" 
+    "Growth/Death Landscape (Delta)" # <--- RENAMED
 ]
 
 # ==========================================
@@ -489,32 +489,13 @@ def run_simulation(vols, initial_biomass, total_vols_range, params):
 def int_to_superscript(n):
     return str(n).translate(str.maketrans('0123456789-', '⁰¹²³⁴⁵⁶⁷⁸⁹⁻'))
 
-def plot_landscape_binned(bin_edges, bin_counts, net_rate_bin_sums, time_point_str):
+def plot_landscape_delta_only(bin_edges, bin_counts, net_rate_bin_sums):
     """
-    Plots a single point per bin representing the Net Growth Rate or the Difference.
-    time_point_str options: 
-      - 'Start (t=0)'
-      - 'End (t=Final)'
-      - 'Difference (End - Start)'
+    Plots ONLY the Delta: (Mean Rate at End) - (Mean Rate at Start)
     """
-    # 1. Determine mode
-    mode = "single"
-    t_idx = 0
-    y_axis_label = ""
-    title_suffix = ""
-    
-    if time_point_str == 'Start (t=0)':
-        t_idx = 0
-        y_axis_label = "Mean Net Growth Rate (μ - λ) at t=0"
-        title_suffix = "Start (t=0)"
-    elif time_point_str == 'End (t=Final)':
-        t_idx = -1
-        y_axis_label = "Mean Net Growth Rate (μ - λ) at t=End"
-        title_suffix = "End (t=Final)"
-    else:
-        mode = "diff"
-        y_axis_label = "Δ Net Growth Rate ((μ-λ)End - (μ-λ)Start)"
-        title_suffix = "Change in Growth Potential"
+    # 1. Setup Labels
+    y_axis_label = "Δ Net Growth Rate ((μ-λ)End - (μ-λ)Start)"
+    title_suffix = "Change in Growth Potential (End - Start)"
 
     # 2. Prepare lists for plotting
     x_vals = []
@@ -535,19 +516,14 @@ def plot_landscape_binned(bin_edges, bin_counts, net_rate_bin_sums, time_point_s
             rate_start = net_rate_bin_sums[i, 0] / bin_counts[i]
             rate_end   = net_rate_bin_sums[i, -1] / bin_counts[i]
             
-            val = 0.0
-            if mode == "diff":
-                val = rate_end - rate_start
-            elif t_idx == 0:
-                val = rate_start
-            else:
-                val = rate_end
+            # Delta calculation
+            val = rate_end - rate_start
             
             x_vals.append(center_vol)
             y_vals.append(val)
             counts_list.append(int(bin_counts[i]))
             
-            # Color logic
+            # Color logic: Blue = Positive (Improvement), Red = Negative (Worsening)
             if val >= 0:
                 colors.append('#1f77b4') # Blue
             else:
@@ -581,7 +557,7 @@ def plot_landscape_binned(bin_edges, bin_counts, net_rate_bin_sums, time_point_s
 
     hover = HoverTool(renderers=[r], tooltips=[
         ("Bin Center", "@Volume{0,0}"),
-        ("Value", "@Value{0.0000}"),
+        ("Delta Value", "@Value{0.0000}"),
         ("Droplets", "@Count")
     ])
     p.add_tools(hover)
@@ -1003,13 +979,8 @@ def main():
                         p = None
                     else:
                         p = plot_abound_dynamics(t_eval, a_bound_bin_sums, bin_counts, bin_edges)
-                elif selected_plot == PLOT_OPTIONS[10]: # Growth/Death Landscape (Binned)
-                    time_choice = st.radio(
-                        "Select Data View:", 
-                        ["Start (t=0)", "End (t=Final)", "Difference (End - Start)"], 
-                        horizontal=True
-                    )
-                    p = plot_landscape_binned(bin_edges, bin_counts, net_rate_bin_sums, time_choice)
+                elif selected_plot == PLOT_OPTIONS[10]: # Growth/Death Landscape (Delta)
+                    p = plot_landscape_delta_only(bin_edges, bin_counts, net_rate_bin_sums)
                 
                 if p is not None and not isinstance(p, (str, type(None))):
                     streamlit_bokeh(p, use_container_width=True)
