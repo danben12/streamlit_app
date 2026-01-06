@@ -968,7 +968,7 @@ def plot_fold_change(vols, initial_biomass, final_biomass, vc_val):
         LegendItem(label='Baseline (0)', renderers=[r_base])
     ], location='top_right')
     p.add_layout(legend, 'right')
-    return p
+    return p, df_fc
 
 def plot_n0_vs_volume(df, Vc):
     plot_df = df.copy()
@@ -1261,3 +1261,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
