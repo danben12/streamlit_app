@@ -18,21 +18,18 @@ from numba import njit, prange
 # ==========================================
 # 0. GLOBAL CONSTANTS
 # ==========================================
-MEAN_PIXELS = 5.5
-STD_PIXELS = 1.0
-
 PLOT_OPTIONS = {
-    "Population Dynamics": "Tracks the abundance (Biomass or Cell Count) over time. Frozen baselines appear as dashed lines.",
+    "Population Dynamics": "Tracks the normalized biomass (B/B₀) over time. Frozen baselines appear as dashed lines.",
     "Survival Probability": "Percentage of droplets remaining 'alive' (Biomass > 1) over time.",
     "MIC vs Volume (Inoculum Effect)": "The Minimum Inhibitory Concentration (MIC) required to kill bacteria at different volumes.",
     "Droplet Distribution": "Histogram comparing total droplet sizes vs. occupied droplet sizes.",
     "Initial Density & Vc": "Scatter plot of initial bacterial density vs volume, identifying the Critical Volume (Vc).",
     "Fold Change": "Log2 Fold Change of biomass (Final/Initial) vs Volume.",
-    "Initial Abundance vs Volume": "Total Biomass or Total Cell Count per droplet at t=0 plotted against Droplet Volume.",
+    "N0 vs Volume": "Initial biomass (N0) plotted against Droplet Volume.",
     "Net Growth Rate (μ - λ)": "The net growth rate (Growth μ - Lysis λ) over time.",
     "Substrate Dynamics": "Depletion of substrate (S) over time.",
     "Antibiotic Dynamics": "Effective antibiotic concentration (free or bound) over time.",
-    "Density Dynamics": "Bacterial density (Abundance/Volume) evolution over time.",
+    "Density Dynamics": "Bacterial density (Biomass/Volume) evolution over time.",
     "Bound Antibiotic": "Number of antibiotic molecules bound per droplet over time.",
     "Growth/Death Heatmap": "Landscape of survival (Fold Change) across Volume and Antibiotic Concentration."
 }
@@ -67,17 +64,9 @@ def configure_page():
         </style>
     """, unsafe_allow_html=True)
     
+    # --- RESTORED TITLE ---
     st.title("🦠 Growth-Lysis Micro-droplet Simulation")
     st.markdown("---")
-
-def get_unit_label(params):
-    return "Cell Count" if "Single Cell" in params.get('analysis_mode', '') else "Biomass (a.u.)"
-
-def convert_to_unit(data, params):
-    # If in Single Cell mode, scale biomass down by MEAN_PIXELS
-    if "Single Cell" in params.get('analysis_mode', ''):
-        return data / MEAN_PIXELS
-    return data
 
 # ==========================================
 # 2. ODE MATH MODELS
@@ -265,16 +254,6 @@ def render_sidebar():
 
     params = {}
 
-    # Analysis Mode (Biomass vs Single Cell)
-    st.sidebar.markdown("### 📊 Analysis Mode")
-    params['analysis_mode'] = st.sidebar.radio(
-        "Analysis Unit", 
-        ["Biomass (Fluorescence)", "Single Cell (Counts)"],
-        index=0,
-        help="Select whether plots display continuous biomass (fluorescence units) or discrete single-cell counts."
-    )
-    st.sidebar.divider()
-
     # Model Selector
     params['model'] = st.sidebar.selectbox(
         "Mathematical Model", 
@@ -370,44 +349,23 @@ def _generate_population_fast(n, mean, std, conc, mean_pix, std_pix):
 def generate_population(mean, std, n, conc, mean_pix, std_pix):
     return _generate_population_fast(n, mean, std, conc, mean_pix, std_pix)
 
-def calculate_vc_and_density(vols, biomass, theoretical_conc, mean_pix, real_counts=None):
+def calculate_vc_and_density(vols, biomass, theoretical_conc, mean_pix):
     if len(vols) == 0: return pd.DataFrame(), 0.0
-    
-    # Use real integer counts if available, otherwise estimate from biomass
-    if real_counts is not None:
-        effective_count = real_counts
-    else:
-        effective_count = biomass / mean_pix
-        
+    effective_count = biomass / mean_pix
     df = pd.DataFrame({'Volume': vols, 'Biomass': biomass, 'Count': effective_count})
-    
-    # For density calc, we usually use biomass density in this model structure, 
-    # but let's stick to the 'Count' for density to find Vc (Critical Volume is about Count/Vol)
     df['InitialDensity'] = df['Count'] / df['Volume']
     df = df.sort_values(by='Volume').reset_index(drop=True)
-    
-    # Avoid log(0)
-    safe_density = df['InitialDensity'].replace(0, np.nan).dropna()
-    if len(safe_density) > 0:
-        log_density = np.log10(safe_density)
-        df['RollingLogMean'] = log_density.rolling(window=100, min_periods=1).mean()
-        df['RollingMeanDensity'] = 10 ** df['RollingLogMean']
-    else:
-        df['RollingMeanDensity'] = 0.0
-
+    log_density = np.log10(df['InitialDensity'])
+    df['RollingLogMean'] = log_density.rolling(window=100, min_periods=1).mean()
+    df['RollingMeanDensity'] = 10 ** df['RollingLogMean']
     convergence_window = 2
     tolerance = 0.05
-    # Calculate difference from theoretical concentration
     differences = np.abs(1 - (df['RollingMeanDensity'] / theoretical_conc))
     rolling_diff = differences.rolling(window=convergence_window).mean()
     met_conditions = np.where(rolling_diff <= tolerance)[0]
-    
-    if len(met_conditions) > 0: 
-        closest_index = met_conditions[0]
-    else: 
-        closest_index = differences.idxmin() if not differences.empty else 0
-        
-    vc_val = df.loc[closest_index, 'Volume'] if not df.empty else 0
+    if len(met_conditions) > 0: closest_index = met_conditions[0]
+    else: closest_index = differences.idxmin()
+    vc_val = df.loc[closest_index, 'Volume']
     return df, vc_val
 
 @njit(cache=True, fastmath=True)
@@ -755,12 +713,9 @@ def plot_survival_probability(t_eval, alive_bin_sums, bin_counts, bin_edges):
     p.add_layout(legend, 'right')
     return p
 
-def plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges, baseline_data=None, params={}):
-    unit_label = get_unit_label(params)
-    
-    p = figure(x_axis_label="Time (h)", y_axis_label=f"Average {unit_label}",
-               height=800, width=1200, tools="pan,wheel_zoom,reset,save",
-               title=f"Population Dynamics ({unit_label})")
+def plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges, baseline_data=None):
+    p = figure(x_axis_label="Time (h)", y_axis_label="Normalized Biomass (B/B₀)",
+               height=800, width=1200, tools="pan,wheel_zoom,reset,save")
     
     if baseline_data:
         b_sums, b_counts, _, _, b_edges, _, _, _, _, _, _ = baseline_data["sim_output"]
@@ -770,8 +725,9 @@ def plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges, baseline_data=None, p
         for i in range(len(b_counts)):
             if b_counts[i] > 0:
                 mean_traj = b_sums[i, :] / b_counts[i]
-                mean_traj = convert_to_unit(mean_traj, params)
-                r_base = p.line(t_eval, mean_traj, line_color=colors_b[c_idx_b], line_width=2, line_dash="dashed", alpha=0.4)
+                initial_val = mean_traj[0]
+                norm_traj = mean_traj / initial_val if initial_val > 1e-9 else mean_traj
+                r_base = p.line(t_eval, norm_traj, line_color=colors_b[c_idx_b], line_width=2, line_dash="dashed", alpha=0.4)
                 c_idx_b += 1
         dummy_line = p.line([], [], line_color="grey", line_dash="dashed", alpha=0.5, line_width=2)
         p.add_layout(Legend(items=[("Baseline (Previous Run)", [dummy_line])], location="top_left"))
@@ -784,22 +740,20 @@ def plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges, baseline_data=None, p
     for i in range(len(bin_counts)):
         if bin_counts[i] > 0:
             mean_traj = bin_sums[i, :] / bin_counts[i]
-            mean_traj = convert_to_unit(mean_traj, params)
-            mean_traj = np.where(mean_traj <= 0, np.nan, mean_traj)
-            
+            initial_val = mean_traj[0]
+            norm_traj = mean_traj / initial_val if initial_val > 1e-9 else mean_traj
+            norm_traj = np.where(norm_traj <= 0, np.nan, norm_traj)
             low_exp = int(np.log10(bin_edges[i]))
             high_exp = int(np.log10(bin_edges[i + 1]))
             label = f"10{int_to_superscript(low_exp)} - 10{int_to_superscript(high_exp)} (n={int(bin_counts[i])})"
-            r = p.line(t_eval, mean_traj, line_color=colors[color_idx], line_width=3, alpha=0.9)
+            r = p.line(t_eval, norm_traj, line_color=colors[color_idx], line_width=3, alpha=0.9)
             legend_items.append((label, [r]))
             color_idx += 1
     
     total_biomass_traj = np.sum(bin_sums, axis=0)
-    total_count = np.sum(bin_counts)
-    meta_traj = total_biomass_traj / total_count if total_count > 0 else total_biomass_traj
-    meta_traj = convert_to_unit(meta_traj, params)
-    
-    r_meta = p.line(t_eval, meta_traj, line_color="white", line_width=4,
+    total_N0 = total_biomass_traj[0]
+    meta_norm = total_biomass_traj / total_N0 if total_N0 > 1e-9 else total_biomass_traj
+    r_meta = p.line(t_eval, meta_norm, line_color="white", line_width=4,
                     line_dash="solid", alpha=1.0)
     legend_items.insert(0, ("Metapopulation (Avg)", [r_meta]))
     
@@ -871,14 +825,10 @@ def plot_a_eff_dynamics(t_eval, a_eff_bin_sums, bin_counts, bin_edges, params):
     p.add_layout(legend, 'right')
     return p
 
-def plot_density_dynamics(t_eval, density_bin_sums, bin_counts, bin_edges, params={}):
-    unit_label = get_unit_label(params)
-    # Density is always Count/Vol or Biomass/Vol. 
-    # If using Single Cell, we want Count/Vol. The density_bin_sums is Biomass/Vol.
-    
-    p = figure(x_axis_label="Time (h)", y_axis_label=f"Cell Density ({unit_label} / μm³)",
+def plot_density_dynamics(t_eval, density_bin_sums, bin_counts, bin_edges):
+    p = figure(x_axis_label="Time (h)", y_axis_label="Cell Density (Biomass/Volume)",
                height=800, width=1200, tools="pan,wheel_zoom,reset,save",
-               title=f"Average {unit_label} Density over Time", y_axis_type='log')
+               title="Average Cell Density over Time", y_axis_type='log')
     high_contrast_color_map = [cc.CET_D1[0], cc.CET_D1[80], cc.CET_D1[180], cc.CET_D1[230], cc.CET_D1[255]]
     unique_bins = sum(1 for c in bin_counts if c > 0)
     colors = linear_palette(high_contrast_color_map, max(1, unique_bins)) if unique_bins > 0 else []
@@ -887,7 +837,6 @@ def plot_density_dynamics(t_eval, density_bin_sums, bin_counts, bin_edges, param
     for i in range(len(bin_counts)):
         if bin_counts[i] > 0:
             mean_vals = density_bin_sums[i, :] / bin_counts[i]
-            mean_vals = convert_to_unit(mean_vals, params)
             mean_vals = np.where(mean_vals <= 0, np.nan, mean_vals)
             low_exp = int(np.log10(bin_edges[i]))
             high_exp = int(np.log10(bin_edges[i + 1]))
@@ -959,23 +908,13 @@ def plot_distribution(total_vols, occupied_vols):
     p.legend.location = "top_right"
     return p
 
-def plot_initial_density_vc(df_density, vc_val, theoretical_density, params={}):
-    unit_label = get_unit_label(params)
+def plot_initial_density_vc(df_density, vc_val, theoretical_density):
     source = ColumnDataSource(df_density)
-    
-    # Decide which column to plot based on mode
-    y_col = 'InitialDensity' # This is Count/Vol (approx) in calculation
-    # If we want consistent units with the selected mode:
-    # 'Count' col is always Count. 'Biomass' col is always Biomass.
-    # InitialDensity in df is derived from Count/Vol.
-    
     p = figure(x_axis_type='log', y_axis_type='log',
-               x_axis_label='Volume (μm³)', y_axis_label=f'Initial Density (Cells/μm³)',
+               x_axis_label='Volume (μm³)', y_axis_label='Initial Density (biomass/μm³)',
                width=1200, height=800, output_backend="webgl", tools="pan,wheel_zoom,reset,save")
     p.xaxis.axis_label_text_font_size = "16pt"
     p.yaxis.axis_label_text_font_size = "16pt"
-    
-    # We always plot the density based on counts for Vc finding logic, as Vc is a geometric/Poisson property
     r_dens = p.scatter('Volume', 'InitialDensity', source=source, color='silver', alpha=0.6, size=4)
     r_roll = p.line(df_density['Volume'], df_density['RollingMeanDensity'], color='red', line_width=3)
     min_v, max_v = df_density['Volume'].min(), df_density['Volume'].max()
@@ -1009,7 +948,7 @@ def plot_fold_change(vols, initial_biomass, final_biomass, vc_val):
     source = ColumnDataSource(df_fc)
     sub_source = ColumnDataSource(df_sub)
     p = figure(x_axis_type='log', y_axis_type='linear',
-               x_axis_label='Volume (μm³)', y_axis_label='Log2 Fold Change',
+               x_axis_label='Volume (μm³)', y_axis_label='Log2 biomass Fold Change',
                width=1200, height=800, y_range=(-7, 9), output_backend="webgl", tools="pan,wheel_zoom,reset,save")
     p.xaxis.axis_label_text_font_size = "16pt"
     p.yaxis.axis_label_text_font_size = "16pt"
@@ -1031,47 +970,30 @@ def plot_fold_change(vols, initial_biomass, final_biomass, vc_val):
     p.add_layout(legend, 'right')
     return p, df_fc
 
-def plot_n0_vs_volume(df, Vc, params={}):
-    # Select Data based on Mode
-    is_single_cell = "Single Cell" in params.get('analysis_mode', '')
-    y_col = 'Count' if is_single_cell else 'Biomass'
-    y_label = 'Initial Cell Count' if is_single_cell else 'Initial Biomass'
-    
+def plot_n0_vs_volume(df, Vc):
     plot_df = df.copy()
     plot_df['DropletID'] = plot_df.index
-    # Ensure plot column exists
-    if y_col not in plot_df.columns:
-        y_col = 'Biomass' # Fallback
-        
     source = ColumnDataSource(plot_df)
-    
     p = figure(x_axis_type='log', y_axis_type='log',
-               x_axis_label='Volume (μm³)', y_axis_label=y_label,
+               x_axis_label='Volume (μm³)', y_axis_label='Initial Biomass',
                output_backend="webgl", width=1200, height=800,
-               tools="pan,wheel_zoom,reset,save",
-               title=f"Initial Abundance ({y_label}) vs Droplet Volume")
-    
+               tools="pan,wheel_zoom,reset,save")
     p.xaxis.axis_label_text_font_size = "16pt"
     p.yaxis.axis_label_text_font_size = "16pt"
-    
-    r_scat = p.scatter('Volume', y_col, source=source, color='gray', alpha=0.6, size=5,
-                       legend_label=f'{y_label} vs. Volume')
-    
-    hover = HoverTool(tooltips=[('Volume', '@Volume{0,0}'), (y_label, f'@{y_col}{{0.00}}'), ('ID', '@DropletID')], renderers=[r_scat])
+    r_scat = p.scatter('Volume', 'Biomass', source=source, color='gray', alpha=0.6, size=5,
+                       legend_label='Biomass vs. Volume')
+    hover = HoverTool(tooltips=[('Volume', '@Volume{0,0}'), ('Biomass', '@Biomass{0.00}'), ('ID', '@DropletID')], renderers=[r_scat])
     p.add_tools(hover)
-    
-    # Regression logic
-    filtered_df = plot_df[(plot_df[y_col] > 0) & (plot_df['Volume'] >= Vc)]
+    filtered_df = plot_df[(plot_df['Biomass'] > 0) & (plot_df['Volume'] >= Vc)]
     stats_text = "Insufficient data for regression"
     if len(filtered_df) > 2:
         x = np.log10(filtered_df['Volume'])
-        y = np.log10(filtered_df[y_col])
+        y = np.log10(filtered_df['Biomass'])
         slope, intercept, r_value, p_value, std_err = linregress(x, y)
         x_values = np.linspace(plot_df['Volume'].min(), plot_df['Volume'].max(), 100)
         y_values = 10 ** (intercept + slope * np.log10(x_values))
         p.line(x_values, y_values, color='red', legend_label='Linear Regression', line_width=3)
         stats_text = f'<b>Regression (V > Vc):</b><br>y = {slope:.2f}x + {intercept:.2f}<br>R² = {r_value ** 2:.3f}'
-    
     p.legend.location = "top_left"
     stats_div = Div(text=stats_text, width=400, height=100)
     stats_div.styles = {
@@ -1091,6 +1013,9 @@ def convert_df(df):
 
 def main():
     configure_page()
+
+    MEAN_PIXELS = 5.5
+    STD_PIXELS = 1.0
 
     if "sim_results" not in st.session_state: st.session_state.sim_results = None
     if "baseline_results" not in st.session_state: st.session_state.baseline_results = None
@@ -1141,8 +1066,7 @@ def main():
             vc_val = 0.0
 
             if N_occupied > 0:
-                # Pass real counts for accurate display
-                df_density, vc_val = calculate_vc_and_density(vols, initial_biomass, params['concentration'], MEAN_PIXELS, real_counts=counts)
+                df_density, vc_val = calculate_vc_and_density(vols, initial_biomass, params['concentration'], MEAN_PIXELS)
                 sim_output = run_simulation(
                     vols, initial_biomass, (total_vols.min(), total_vols.max()), params
                 )
@@ -1276,16 +1200,16 @@ def main():
                     else:
                         st.warning("Heatmap data unavailable. Please Run Simulation.")
                 elif selected_plot == "Population Dynamics":
-                    p = plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges, st.session_state.baseline_results, data["params"])
+                    p = plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges, st.session_state.baseline_results)
                 elif selected_plot == "Droplet Distribution":
                     p = plot_distribution(data["total_vols"], data["vols"])
                 elif selected_plot == "Initial Density & Vc":
-                    p = plot_initial_density_vc(data["df_density"], data["vc_val"], data["params"]['concentration'], data["params"])
+                    p = plot_initial_density_vc(data["df_density"], data["vc_val"], data["params"]['concentration'])
                 elif selected_plot == "Fold Change":
                     p, df_fc = plot_fold_change(data["vols"], data["initial_biomass"], final_biomass, data["vc_val"])
                     st.download_button("📥 Download CSV", data=convert_df(df_fc), file_name="fold_change_data.csv", mime="text/csv")
-                elif selected_plot == "N0 vs Volume" or selected_plot == "Initial Abundance vs Volume":
-                    p = plot_n0_vs_volume(data["df_density"], data["vc_val"], data["params"])
+                elif selected_plot == "N0 vs Volume":
+                    p = plot_n0_vs_volume(data["df_density"], data["vc_val"])
                 elif selected_plot == "Net Growth Rate (μ - λ)":
                     p = plot_net_growth_dynamics(t_eval, net_rate_bin_sums, bin_counts, bin_edges)
                 elif selected_plot == "Substrate Dynamics":
@@ -1293,7 +1217,7 @@ def main():
                 elif selected_plot == "Antibiotic Dynamics":
                     p = plot_a_eff_dynamics(t_eval, a_eff_bin_sums, bin_counts, bin_edges, data["params"])
                 elif selected_plot == "Density Dynamics":
-                    p = plot_density_dynamics(t_eval, density_bin_sums, bin_counts, bin_edges, data["params"])
+                    p = plot_density_dynamics(t_eval, density_bin_sums, bin_counts, bin_edges)
                 elif selected_plot == "Bound Antibiotic":
                     if data["params"]['model'] == "Linear Lysis Rate":
                         st.warning("This model does not simulate binding kinetics.")
