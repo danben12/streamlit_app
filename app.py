@@ -130,6 +130,22 @@ def vec_combined_model(y_flat, t, N, V, mu_max, Ks, Y, K_on, K_off, K_D, n, a, b
     dY = np.stack((dA_free_dt, dA_bound_dt, dB_live_dt, dB_dead_dt, dS_dt), axis=1)
     return dY.flatten()
 
+@njit(cache=True, fastmath=True, nogil=True)
+def vec_monod_growth(y_flat, t, N, V, mu_max, Ks, Y):
+    y = y_flat.reshape((N, 3))
+    # Structure similar to Linear Lysis for simplicity: [B_live, B_dead, S]
+    # B_dead is kept as a dummy variable (0) to maintain structural consistency
+    B_live, B_dead, S = y[:, 0], y[:, 1], y[:, 2]
+    density = B_live / V
+    mu = mu_max * S / (Ks + S)
+    
+    dB_live_dt = mu * B_live # No lambda (lysis) term
+    dB_dead_dt = np.zeros_like(B_live)
+    dS_dt = - (1.0 / Y) * mu * density
+    
+    dY = np.stack((dB_live_dt, dB_dead_dt, dS_dt), axis=1)
+    return dY.flatten()
+
 # ==========================================
 # 3. HELPER: LOAD HISTORY & CALLBACKS
 # ==========================================
@@ -265,7 +281,7 @@ def render_sidebar():
     # Model Selector
     params['model'] = st.sidebar.selectbox(
         "Mathematical Model", 
-        ["Effective Concentration", "Linear Lysis Rate", "Combined Model"], 
+        ["Effective Concentration", "Linear Lysis Rate", "Combined Model", "Monod Growth (No Antibiotic)"], 
         key='model_select'
     )
     
@@ -303,35 +319,41 @@ def render_sidebar():
         params['S0'] = c4.number_input("S0", value=st.session_state.get('S0', 1.0), key='S0')
 
     # 4. Pharmacodynamics
-    with st.sidebar.expander("💊 Pharmacodynamics", expanded=True):
-        params['A0'] = st.number_input("Initial Antibiotic (A0)", value=st.session_state.get('A0', 10.0), key='A0')
-        
-        defaults = ['K_on', 'K_off', 'K_D', 'n_hill', 'lambda_max', 'a', 'b', 'K_A0']
+    # Only show PD params if NOT using the classic Monod growth model
+    if params['model'] != "Monod Growth (No Antibiotic)":
+        with st.sidebar.expander("💊 Pharmacodynamics", expanded=True):
+            params['A0'] = st.number_input("Initial Antibiotic (A0)", value=st.session_state.get('A0', 10.0), key='A0')
+            
+            defaults = ['K_on', 'K_off', 'K_D', 'n_hill', 'lambda_max', 'a', 'b', 'K_A0']
+            for key in defaults: params[key] = 0.0
+
+            if params['model'] in ["Effective Concentration", "Combined Model"]:
+                c1, c2 = st.columns(2)
+                params['K_on'] = c1.number_input("K_on", value=st.session_state.get('K_on', 750.0), key='K_on')
+                params['K_off'] = c2.number_input("K_off", value=st.session_state.get('K_off', 0.01), key='K_off')
+                params['K_D'] = st.number_input("K_D", value=st.session_state.get('K_D', 12000.0), key='K_D')
+                if 'n_hill' not in st.session_state: st.session_state.n_hill = 20.0
+                params['n_hill'] = st.number_input("Hill (n)", value=st.session_state.get('n_hill_1', st.session_state.n_hill), key='n_hill_1')
+
+            if params['model'] == "Effective Concentration":
+                params['lambda_max'] = st.number_input("λ_max", value=st.session_state.get('lambda_max', 1.0), key='lambda_max')
+
+            if params['model'] in ["Linear Lysis Rate", "Combined Model"]:
+                c1, c2 = st.columns(2)
+                params['a'] = c1.number_input("Slope (a)", value=st.session_state.get('a', 3.0), key='a')
+                params['b'] = c2.number_input("Intercept (b)", value=st.session_state.get('b', 0.1), key='b')
+
+            if params['model'] == "Linear Lysis Rate":
+                params['K_A0'] = st.number_input("K_A0", value=st.session_state.get('K_A0', 10.0), key='K_A0')
+                val_n_hill = st.session_state.get('n_hill_2', 20.0)
+                params['n_hill'] = st.number_input("Hill (n)", value=val_n_hill, key='n_hill_2')
+
+            if 'n_hill_1' in params: params['n_hill'] = params['n_hill_1']
+            elif 'n_hill_2' in params: params['n_hill'] = params['n_hill_2']
+    else:
+        # Default fillers for Monod mode to prevent errors
+        defaults = ['A0', 'K_on', 'K_off', 'K_D', 'n_hill', 'lambda_max', 'a', 'b', 'K_A0']
         for key in defaults: params[key] = 0.0
-
-        if params['model'] in ["Effective Concentration", "Combined Model"]:
-            c1, c2 = st.columns(2)
-            params['K_on'] = c1.number_input("K_on", value=st.session_state.get('K_on', 750.0), key='K_on')
-            params['K_off'] = c2.number_input("K_off", value=st.session_state.get('K_off', 0.01), key='K_off')
-            params['K_D'] = st.number_input("K_D", value=st.session_state.get('K_D', 12000.0), key='K_D')
-            if 'n_hill' not in st.session_state: st.session_state.n_hill = 20.0
-            params['n_hill'] = st.number_input("Hill (n)", value=st.session_state.get('n_hill_1', st.session_state.n_hill), key='n_hill_1')
-
-        if params['model'] == "Effective Concentration":
-            params['lambda_max'] = st.number_input("λ_max", value=st.session_state.get('lambda_max', 1.0), key='lambda_max')
-
-        if params['model'] in ["Linear Lysis Rate", "Combined Model"]:
-            c1, c2 = st.columns(2)
-            params['a'] = c1.number_input("Slope (a)", value=st.session_state.get('a', 3.0), key='a')
-            params['b'] = c2.number_input("Intercept (b)", value=st.session_state.get('b', 0.1), key='b')
-
-        if params['model'] == "Linear Lysis Rate":
-            params['K_A0'] = st.number_input("K_A0", value=st.session_state.get('K_A0', 10.0), key='K_A0')
-            val_n_hill = st.session_state.get('n_hill_2', 20.0)
-            params['n_hill'] = st.number_input("Hill (n)", value=val_n_hill, key='n_hill_2')
-
-        if 'n_hill_1' in params: params['n_hill'] = params['n_hill_1']
-        elif 'n_hill_2' in params: params['n_hill'] = params['n_hill_2']
 
     return params, "Simulator"
 
@@ -387,14 +409,24 @@ def calculate_vc_and_density(vols, biomass, theoretical_conc, mean_pix):
 @njit(cache=True, fastmath=True)
 def calculate_batch_lambda(sol_reshaped, t_eval, vols, model_type_int,
                            mu_max, Ks, K_D, n_hill, lambda_max, A0, K_A0, a, b):
+    # Model 3 is Monod Growth (No Antibiotic)
+    if model_type_int == 3:
+        # For Monod, structure is [B_live, B_dead, S]
+        S = sol_reshaped[:, :, 2]
+        density = sol_reshaped[:, :, 0] / vols
+        mu_mat = mu_max * S / (Ks + S)
+        return np.zeros_like(mu_mat)
+
     if model_type_int == 1:
         S = sol_reshaped[:, :, 2]
     else:
         A_bound = sol_reshaped[:, :, 1]
         B_live = sol_reshaped[:, :, 2]
         S = sol_reshaped[:, :, 4]
+    
     density = B_live / vols
     mu_mat = mu_max * S / (Ks + S)
+    
     if model_type_int == 0:
         A_eff = A_bound / np.maximum(density, 1e-12)
         A_eff_n = np.power(A_eff, n_hill)
@@ -418,6 +450,15 @@ def calculate_batch_lambda(sol_reshaped, t_eval, vols, model_type_int,
 
 @njit(cache=True, fastmath=True)
 def calculate_derived_metrics(sol_reshaped, vols, model_type_int, mu_max, Ks):
+    if model_type_int == 3: # Monod
+        B_live = sol_reshaped[:, :, 0]
+        S = sol_reshaped[:, :, 2]
+        A_bound = np.zeros_like(B_live)
+        density = B_live / vols
+        A_eff = np.zeros_like(density)
+        mu_mat = mu_max * S / (Ks + S)
+        return A_eff, mu_mat, density, A_bound, B_live, S
+
     if model_type_int == 1:
         B_live = sol_reshaped[:, :, 0]
         S = sol_reshaped[:, :, 2]
@@ -484,10 +525,14 @@ def solve_individual_droplet(idx, single_vol, single_biomass, t_eval, params, bi
         model_int = 1
         num_vars = 3
         func = vec_linear_lysis
-    else:
+    elif model == "Combined Model":
         model_int = 2
         num_vars = 5
         func = vec_combined_model
+    else: # Monod Growth (No Antibiotic)
+        model_int = 3
+        num_vars = 3
+        func = vec_monod_growth
 
     args = ()
     y0_flat = None
@@ -516,6 +561,13 @@ def solve_individual_droplet(idx, single_vol, single_biomass, t_eval, params, bi
         y0_flat = y0_mat.flatten()
         args = (current_batch_size, batch_vols, params['mu_max'], params['Ks'], params['Y'],
                 params['K_on'], params['K_off'], params['K_D'], params['n_hill'], params['a'], params['b'])
+    elif model == "Monod Growth (No Antibiotic)":
+        y0_mat = np.zeros((current_batch_size, 3))
+        y0_mat[:, 0] = batch_biomass
+        y0_mat[:, 2] = params['S0']
+        y0_flat = y0_mat.flatten()
+        # Only pass growth parameters
+        args = (current_batch_size, batch_vols, params['mu_max'], params['Ks'], params['Y'])
 
     sol = odeint(func, y0_flat, t_eval, args=args, rtol=1e-3, atol=1e-6)
     sol_reshaped = sol.reshape(N_STEPS, current_batch_size, num_vars)
@@ -1242,7 +1294,7 @@ def main():
                 elif selected_plot == "Density Dynamics":
                     p = plot_density_dynamics(t_eval, density_bin_sums, bin_counts, bin_edges)
                 elif selected_plot == "Bound Antibiotic":
-                    if data["params"]['model'] == "Linear Lysis Rate":
+                    if data["params"]['model'] == "Linear Lysis Rate" or data["params"]['model'] == "Monod Growth (No Antibiotic)":
                         st.warning("This model does not simulate binding kinetics.")
                         p = None
                     else:
