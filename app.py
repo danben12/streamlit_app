@@ -19,19 +19,26 @@ from numba import njit, prange
 # 0. GLOBAL CONSTANTS
 # ==========================================
 PLOT_OPTIONS = {
+    # --- Group I: General Overview (The "What") ---
     "Population Dynamics": "Tracks the normalized biomass (B/B₀) over time. Frozen baselines appear as dashed lines.",
-    "Survival Probability": "Percentage of droplets remaining 'alive' (Biomass > 1) over time.",
-    "MIC vs Volume (Inoculum Effect)": "The Minimum Inhibitory Concentration (MIC) required to kill bacteria at different volumes.",
+    "Fold Change": "Log2 Fold Change of biomass (Final/Initial) vs Volume.",
+
+    # --- Group II: Initial Conditions (The "Setup") ---
     "Droplet Distribution": "Histogram comparing total droplet sizes vs. occupied droplet sizes.",
     "Initial Density & Vc": "Scatter plot of initial bacterial density vs volume, identifying the Critical Volume (Vc).",
-    "Fold Change": "Log2 Fold Change of biomass (Final/Initial) vs Volume.",
     "N0 vs Volume": "Initial biomass (N0) plotted against Droplet Volume.",
+
+    # --- Group III: Mechanisms (The "Why" - Time Series) ---
     "Net Growth Rate (μ - λ)": "The net growth rate (Growth μ - Lysis λ) over time.",
-    "Substrate Dynamics": "Depletion of substrate (S) over time.",
     "Antibiotic Dynamics": "Effective antibiotic concentration (free or bound) over time.",
-    "Density Dynamics": "Bacterial density (Biomass/Volume) evolution over time.",
     "Bound Antibiotic": "Number of antibiotic molecules bound per droplet over time.",
-    "Growth/Death Heatmap": "Landscape of survival (Fold Change) across Volume and Antibiotic Concentration."
+    "Density Dynamics": "Bacterial density (Biomass/Volume) evolution over time.",
+    "Substrate Dynamics": "Depletion of substrate (S) over time.",
+
+    # --- Group IV: Global Synthesis (The "Conclusion") ---
+    "Growth/Death Heatmap": "Landscape of survival (Fold Change) across Volume and Antibiotic Concentration.",
+    "MIC vs Volume (Inoculum Effect)": "The Minimum Inhibitory Concentration (MIC) required to kill bacteria at different volumes.",
+    "Survival Probability": "Percentage of droplets remaining 'alive' (Biomass > 1) over time."
 }
 
 PLOT_LIST = list(PLOT_OPTIONS.keys())
