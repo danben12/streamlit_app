@@ -137,6 +137,7 @@ def vec_combined_model(y_flat, t, N, V, mu_max, Ks, Y, K_on, K_off, K_D, n, a, b
 def load_params_from_history(row):
     mapping = {
         'model': 'model_select',
+        'sim_mode': 'sim_mode_select',
         't_start': 't_start', 't_end': 't_end', 'dt': 'dt',
         'mean_log10': 'mean_log10', 'std_log10': 'std_log10', 'n_samples': 'n_samples',
         'conc_exp': 'conc_exp',
@@ -266,6 +267,14 @@ def render_sidebar():
         "Mathematical Model", 
         ["Effective Concentration", "Linear Lysis Rate", "Combined Model"], 
         key='model_select'
+    )
+    
+    # Simulation Mode
+    params['sim_mode'] = st.sidebar.radio(
+        "Simulation Mode", 
+        ["Biomass Mode", "Single Cell Mode"], 
+        key='sim_mode_select',
+        horizontal=True
     )
 
     # 1. Time Settings
@@ -1039,6 +1048,13 @@ def main():
 
     # Otherwise, proceed with Simulator
     params = sidebar_result
+    
+    if params.get('sim_mode') == 'Single Cell Mode':
+        MEAN_PIXELS = 1.0
+        STD_PIXELS = 0.0
+    else:
+        MEAN_PIXELS = 5.5
+        STD_PIXELS = 1.0
     
     # 2. METRICS CONTAINER (Placeholder for Top Dashboard)
     metrics_container = st.container()
