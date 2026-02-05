@@ -347,13 +347,18 @@ def render_sidebar():
 # 6. CORE LOGIC
 # ==========================================
 
-@njit(cache=True, parallel=True, fastmath=True)
-def _generate_population_fast(n, mean, std, conc, mean_pix, std_pix):
-    np.random.seed(42) # Hardcoded seed for consistent landscape
+@njit(cache=True)
+def _generate_volumes_deterministic(n, mean, std):
+    np.random.seed(42)  # Hardcoded seed for consistent landscape
     log_data = np.random.normal(mean, std, int(n))
     volume_data = 10 ** log_data
     mask_vol = (volume_data >= 1000) & (volume_data <= 1e8)
     trimmed_vol = volume_data[mask_vol]
+    return trimmed_vol
+
+@njit(cache=True, parallel=True, fastmath=True)
+def _occupy_droplets_parallel(trimmed_vol, conc, mean_pix, std_pix):
+    np.random.seed(42) # Ensure consistent noise generation
     lambdas = trimmed_vol * conc
     cell_counts = np.zeros(len(lambdas), dtype=np.int64)
     for i in prange(len(lambdas)):
@@ -368,11 +373,13 @@ def _generate_population_fast(n, mean, std, conc, mean_pix, std_pix):
     raw_biomass = base_biomass + noise
     final_biomass = np.round(raw_biomass)
     final_biomass = np.maximum(final_biomass, 1.0)
-    return final_vols, final_counts, final_biomass, trimmed_vol
+    return final_vols, final_counts, final_biomass
 
 @st.cache_data(show_spinner="Generating population...")
 def generate_population(mean, std, n, conc, mean_pix, std_pix):
-    return _generate_population_fast(n, mean, std, conc, mean_pix, std_pix)
+    total_vols = _generate_volumes_deterministic(n, mean, std)
+    final_vols, final_counts, final_biomass = _occupy_droplets_parallel(total_vols, conc, mean_pix, std_pix)
+    return final_vols, final_counts, final_biomass, total_vols
 
 def calculate_vc_and_density(vols, biomass, theoretical_conc, mean_pix):
     if len(vols) == 0: return pd.DataFrame(), 0.0
