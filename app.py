@@ -139,7 +139,7 @@ def load_params_from_history(row):
         'sim_mode': 'sim_mode_select',
         't_start': 't_start', 't_end': 't_end', 'dt': 'dt',
         'mean_log10': 'mean_log10', 'std_log10': 'std_log10', 'n_samples': 'n_samples',
-        'conc_exp': 'conc_exp',
+        'conc_exp_ml': 'conc_exp_ml',  # Updated key
         'mu_max': 'mu_max', 'Y': 'Y', 'S0': 'S0', 'Ks': 'Ks',
         'A0': 'A0',
         'K_on': 'K_on', 'K_off': 'K_off', 'K_D': 'K_D', 
@@ -147,6 +147,12 @@ def load_params_from_history(row):
         'lambda_max': 'lambda_max',
         'a': 'a', 'b': 'b', 'K_A0': 'K_A0'
     }
+    
+    # Handle legacy history (convert old conc_exp to conc_exp_ml)
+    if 'conc_exp' in row and row['conc_exp'] is not None:
+        # Old range was -7 to -1. New is 5 to 11. Conversion: +12.
+        st.session_state['conc_exp_ml'] = float(row['conc_exp']) + 12.0
+    
     for col, state_key in mapping.items():
         if col in row and row[col] is not None:
             if col == 'n_hill':
@@ -289,9 +295,13 @@ def render_sidebar():
         c1, c2 = st.columns(2)
         params['mean_log10'] = c1.number_input("Mean Log10(Vol)", 1.0, 8.0, st.session_state.get('mean_log10', 3.0), 0.1, key='mean_log10')
         params['std_log10'] = c2.number_input("Std Dev", 0.1, 3.0, st.session_state.get('std_log10', 1.2), 0.1, key='std_log10')
-        params['conc_exp'] = st.slider("Inoculum Conc (10^x cells/mL)", 5.0, 11.0, st.session_state.get('conc_exp_ml', 7.7), 0.1, key='conc_exp_ml')
-        # Convert cells/mL to cells/µm³ (1 mL = 10^12 µm³)
-        params['concentration'] = (10 ** params['conc_exp']) / 1e12
+        
+        # CHANGED: Slider now in cells/mL (10^5 to 10^11)
+        # Default 7.7 corresponds to approx 5e7 cells/mL (similar to previous -4.3)
+        params['conc_exp_ml'] = st.slider("Inoculum Conc (10^x cells/mL)", 5.0, 11.0, st.session_state.get('conc_exp_ml', 7.7), 0.1, key='conc_exp_ml')
+        
+        # CONVERSION: cells/mL -> cells/µm³ (divide by 10^12)
+        params['concentration'] = (10 ** params['conc_exp_ml']) / 1e12
 
     # 3. Biology
     with st.sidebar.expander("🧫 Bacterial Physiology", expanded=False):
@@ -1184,7 +1194,8 @@ def main():
             st.session_state.sim_results = {
                 "vols": vols, "counts": counts, "initial_biomass": initial_biomass,
                 "total_vols": total_vols, "n_trimmed": n_trimmed, "N_occupied": N_occupied,
-                "df_density": df_density, "vc_val": vc_val, "sim_output": sim_output, "params": params
+                "df_density": df_density, "vc_val": vc_val,
+                "sim_output": sim_output, "params": params
             }
 
         # --- B. RUN HEATMAP SCAN (IMMEDIATELY AFTER) ---
@@ -1375,6 +1386,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
