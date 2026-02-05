@@ -140,7 +140,6 @@ def load_params_from_history(row):
         't_start': 't_start', 't_end': 't_end', 'dt': 'dt',
         'mean_log10': 'mean_log10', 'std_log10': 'std_log10', 'n_samples': 'n_samples',
         'conc_exp_ml': 'conc_exp_ml',  # Updated key
-        'seed': 'seed', # Added seed
         'mu_max': 'mu_max', 'Y': 'Y', 'S0': 'S0', 'Ks': 'Ks',
         'A0': 'A0',
         'K_on': 'K_on', 'K_off': 'K_off', 'K_D': 'K_D', 
@@ -302,9 +301,6 @@ def render_sidebar():
         # CONVERSION: cells/mL -> cells/µm³ (divide by 10^12)
         params['concentration'] = (10 ** params['conc_exp_ml']) / 1e12
 
-        # Added Seed for reproducibility
-        params['seed'] = st.number_input("Random Seed", value=st.session_state.get('seed', 42), key='seed')
-
     # 3. Biology
     with st.sidebar.expander("🧫 Bacterial Physiology", expanded=False):
         c1, c2 = st.columns(2)
@@ -352,8 +348,8 @@ def render_sidebar():
 # ==========================================
 
 @njit(cache=True, parallel=True, fastmath=True)
-def _generate_population_fast(n, mean, std, conc, mean_pix, std_pix, seed):
-    np.random.seed(seed) # Fix the random seed
+def _generate_population_fast(n, mean, std, conc, mean_pix, std_pix):
+    np.random.seed(42) # Hardcoded seed for consistent landscape
     log_data = np.random.normal(mean, std, int(n))
     volume_data = 10 ** log_data
     mask_vol = (volume_data >= 1000) & (volume_data <= 1e8)
@@ -375,8 +371,8 @@ def _generate_population_fast(n, mean, std, conc, mean_pix, std_pix, seed):
     return final_vols, final_counts, final_biomass, trimmed_vol
 
 @st.cache_data(show_spinner="Generating population...")
-def generate_population(mean, std, n, conc, mean_pix, std_pix, seed):
-    return _generate_population_fast(n, mean, std, conc, mean_pix, std_pix, seed)
+def generate_population(mean, std, n, conc, mean_pix, std_pix):
+    return _generate_population_fast(n, mean, std, conc, mean_pix, std_pix)
 
 def calculate_vc_and_density(vols, biomass, theoretical_conc, mean_pix):
     if len(vols) == 0: return pd.DataFrame(), 0.0
@@ -1184,7 +1180,7 @@ def main():
         with st.spinner("Processing main droplet population..."):
             vols, counts, initial_biomass, total_vols = generate_population(
                 params['mean_log10'], params['std_log10'], params['n_samples'],
-                params['concentration'], MEAN_PIXELS, STD_PIXELS, params['seed']
+                params['concentration'], MEAN_PIXELS, STD_PIXELS
             )
             sort_idx = np.argsort(vols)
             vols = vols[sort_idx]
