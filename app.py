@@ -289,11 +289,9 @@ def render_sidebar():
         c1, c2 = st.columns(2)
         params['mean_log10'] = c1.number_input("Mean Log10(Vol)", 1.0, 8.0, st.session_state.get('mean_log10', 3.0), 0.1, key='mean_log10')
         params['std_log10'] = c2.number_input("Std Dev", 0.1, 3.0, st.session_state.get('std_log10', 1.2), 0.1, key='std_log10')
-        params['conc_exp'] = st.slider("Inoculum Conc (10^x)", -7.0, -1.0, st.session_state.get('conc_exp', -4.3), 0.1, key='conc_exp')
-        params['concentration'] = 10 ** params['conc_exp']
-        # Display conversion to cells/mL
-        cells_per_ml = params['concentration'] * 1e12
-        st.caption(f"**≈ {cells_per_ml:.1e} cells/mL** (Density: {params['concentration']:.2e} cells/µm³)")
+        params['conc_exp'] = st.slider("Inoculum Conc (10^x cells/mL)", 5.0, 11.0, st.session_state.get('conc_exp_ml', 7.7), 0.1, key='conc_exp_ml')
+        # Convert cells/mL to cells/µm³ (1 mL = 10^12 µm³)
+        params['concentration'] = (10 ** params['conc_exp']) / 1e12
 
     # 3. Biology
     with st.sidebar.expander("🧫 Bacterial Physiology", expanded=False):
@@ -1377,5 +1375,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
