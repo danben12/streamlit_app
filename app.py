@@ -292,6 +292,10 @@ def render_sidebar():
         params['conc_exp'] = st.slider("Inoculum Conc (10^x)", -7.0, -1.0, st.session_state.get('conc_exp', -4.3), 0.1, key='conc_exp')
         params['concentration'] = 10 ** params['conc_exp']
 
+# Display conversion to cells/mL
+cells_per_ml = params['concentration'] * 1e12
+st.caption(f"**≈ {cells_per_ml:.1e} cells/mL** (Density: {params['concentration']:.2e} cells/µm³)")
+
     # 3. Biology
     with st.sidebar.expander("🧫 Bacterial Physiology", expanded=False):
         c1, c2 = st.columns(2)
@@ -1374,3 +1378,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
