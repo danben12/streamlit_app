@@ -311,9 +311,6 @@ def render_sidebar():
         # Checkbox for fixed/random seed - Placed INSIDE the expander
         params['fix_seed'] = st.checkbox("Fix Random Seed", value=st.session_state.get('fix_seed_checkbox', True), key='fix_seed_checkbox', help="Uncheck to generate a new random landscape. Check to lock the current landscape.")
         
-        # Show current seed
-        if 'current_seed' not in st.session_state: st.session_state.current_seed = 42
-        st.caption(f"Current Seed: {st.session_state.current_seed}")
 
     # 3. Biology
     with st.sidebar.expander("🧫 Bacterial Physiology", expanded=False):
@@ -1447,3 +1444,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
