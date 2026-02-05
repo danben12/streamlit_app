@@ -1277,52 +1277,55 @@ def main():
             with st.container():
                 p = None
                 df_download = None
-                file_name = "data.csv"
+                
+                # Generate a timestamp string for filenames (e.g., 20231027_103045)
+                timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+                file_name = f"data_{timestamp_str}.csv"
                 
                 if selected_plot == "Growth/Death Heatmap": 
                     if st.session_state.get("heatmap_data"):
                         hd = st.session_state.heatmap_data
                         p, df_download = plot_heatmap(hd["conc_grid"], hd["vol_centers"], hd["matrix"])
-                        file_name = "heatmap_data.csv"
+                        file_name = f"heatmap_data_{timestamp_str}.csv"
                     else:
                         st.warning("Heatmap data unavailable. Please Run Simulation.")
 
                 elif selected_plot == "Survival Probability":
                     p, df_download = plot_survival_probability(t_eval, alive_bin_sums, bin_counts, bin_edges)
-                    file_name = "survival_probability.csv"
+                    file_name = f"survival_probability_{timestamp_str}.csv"
                 elif selected_plot == "MIC vs Volume (Inoculum Effect)":
                     if st.session_state.get("heatmap_data"):
                         p, df_download = plot_mic_vs_volume(st.session_state.heatmap_data, data["params"])
-                        file_name = "mic_vs_volume.csv"
+                        file_name = f"mic_vs_volume_{timestamp_str}.csv"
                     else:
                         st.warning("Heatmap data unavailable. Please Run Simulation.")
                 elif selected_plot == "Population Dynamics":
                     p, df_download = plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges, st.session_state.baseline_results)
-                    file_name = "population_dynamics.csv"
+                    file_name = f"population_dynamics_{timestamp_str}.csv"
                 elif selected_plot == "Droplet Distribution":
                     p, df_download = plot_distribution(data["total_vols"], data["vols"])
-                    file_name = "droplet_distribution.csv"
+                    file_name = f"droplet_distribution_{timestamp_str}.csv"
                 elif selected_plot == "Initial Density & Vc":
                     p, df_download = plot_initial_density_vc(data["df_density"], data["vc_val"], data["params"]['concentration'])
-                    file_name = "initial_density_vc.csv"
+                    file_name = f"initial_density_vc_{timestamp_str}.csv"
                 elif selected_plot == "Fold Change":
                     p, df_download = plot_fold_change(data["vols"], data["initial_biomass"], final_biomass, data["vc_val"])
-                    file_name = "fold_change_data.csv"
+                    file_name = f"fold_change_data_{timestamp_str}.csv"
                 elif selected_plot == "N0 vs Volume":
                     p, df_download = plot_n0_vs_volume(data["df_density"], data["vc_val"])
-                    file_name = "n0_vs_volume.csv"
+                    file_name = f"n0_vs_volume_{timestamp_str}.csv"
                 elif selected_plot == "Net Growth Rate (μ - λ)":
                     p, df_download = plot_net_growth_dynamics(t_eval, net_rate_bin_sums, bin_counts, bin_edges)
-                    file_name = "net_growth_rate.csv"
+                    file_name = f"net_growth_rate_{timestamp_str}.csv"
                 elif selected_plot == "Substrate Dynamics":
                     p, df_download = plot_substrate_dynamics(t_eval, s_bin_sums, bin_counts, bin_edges)
-                    file_name = "substrate_dynamics.csv"
+                    file_name = f"substrate_dynamics_{timestamp_str}.csv"
                 elif selected_plot == "Antibiotic Dynamics":
                     p, df_download = plot_a_eff_dynamics(t_eval, a_eff_bin_sums, bin_counts, bin_edges, data["params"])
-                    file_name = "antibiotic_dynamics.csv"
+                    file_name = f"antibiotic_dynamics_{timestamp_str}.csv"
                 elif selected_plot == "Density Dynamics":
                     p, df_download = plot_density_dynamics(t_eval, density_bin_sums, bin_counts, bin_edges)
-                    file_name = "density_dynamics.csv"
+                    file_name = f"density_dynamics_{timestamp_str}.csv"
                 elif selected_plot == "Bound Antibiotic":
                     if data["params"]['model'] == "Linear Lysis Rate":
                         st.warning("This model does not simulate binding kinetics.")
@@ -1330,7 +1333,7 @@ def main():
                         df_download = None
                     else:
                         p, df_download = plot_abound_dynamics(t_eval, a_bound_bin_sums, bin_counts, bin_edges)
-                        file_name = "bound_antibiotic_dynamics.csv"
+                        file_name = f"bound_antibiotic_dynamics_{timestamp_str}.csv"
 
                 # --- RENDER ALL PLOTS HERE ---
                 if df_download is not None:
