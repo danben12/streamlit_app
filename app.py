@@ -146,13 +146,19 @@ def load_params_from_history(row):
         'K_on': 'K_on', 'K_off': 'K_off', 'K_D': 'K_D', 
         'n_hill': 'n_hill_1', 
         'lambda_max': 'lambda_max',
-        'a': 'a', 'b': 'b', 'K_A0': 'K_A0'
+        'a': 'a', 'b': 'b', 'K_A0': 'K_A0',
+        'seed': 'current_seed' # Load seed from history into session state
     }
     
     # Handle legacy history (convert old conc_exp to conc_exp_ml)
     if 'conc_exp' in row and row['conc_exp'] is not None:
         # Old range was -7 to -1 (cells/um3). New is 5 to 11 (cells/ml). Conversion: +12.
         st.session_state['conc_exp_ml'] = float(row['conc_exp']) + 12.0
+        
+    # Handle seed loading
+    if 'seed' in row:
+        st.session_state.current_seed = row['seed']
+        st.session_state.fix_seed_checkbox = True # Lock it when loading from history
     
     for col, state_key in mapping.items():
         if col in row and row[col] is not None:
@@ -160,7 +166,7 @@ def load_params_from_history(row):
                 st.session_state['n_hill_1'] = row[col]
                 st.session_state['n_hill_2'] = row[col]
                 st.session_state['n_hill'] = row[col]
-            else:
+            elif col != 'seed': # Skip seed, handled above
                 try:
                     val = row[col]
                     if isinstance(val, (np.integer, int)): val = int(val)
@@ -303,7 +309,11 @@ def render_sidebar():
         params['concentration'] = (10 ** params['conc_exp_ml']) / 1e12
 
         # Checkbox for fixed/random seed - Placed INSIDE the expander
-        params['fix_seed'] = st.checkbox("Fix Random Seed (Reproducible)", value=st.session_state.get('fix_seed_checkbox', True), key='fix_seed_checkbox')
+        params['fix_seed'] = st.checkbox("Fix Random Seed", value=st.session_state.get('fix_seed_checkbox', True), key='fix_seed_checkbox', help="Uncheck to generate a new random landscape. Check to lock the current landscape.")
+        
+        # Show current seed
+        if 'current_seed' not in st.session_state: st.session_state.current_seed = 42
+        st.caption(f"Current Seed: {st.session_state.current_seed}")
 
     # 3. Biology
     with st.sidebar.expander("🧫 Bacterial Physiology", expanded=False):
@@ -1149,10 +1159,12 @@ def main():
     MEAN_PIXELS = 5.5
     STD_PIXELS = 1.0
 
+    # Ensure session state variables exist
     if "sim_results" not in st.session_state: st.session_state.sim_results = None
     if "baseline_results" not in st.session_state: st.session_state.baseline_results = None
     if "run_history" not in st.session_state: st.session_state.run_history = []
     if "trigger_run" not in st.session_state: st.session_state.trigger_run = False
+    if "current_seed" not in st.session_state: st.session_state.current_seed = 42
     
     # 1. Render Sidebar (Handle Navigation)
     sidebar_result, current_mode = render_sidebar()
@@ -1190,12 +1202,17 @@ def main():
         # --- A. RUN MAIN SIMULATION ---
         with st.spinner("Processing main droplet population..."):
             
-            # Determine seed based on checkbox
-            if params['fix_seed']:
-                run_seed = 42
-            else:
-                run_seed = np.random.randint(1, 1000000)
-                
+            # Determine seed based on checkbox state
+            if not params['fix_seed']:
+                # UNCHECKED: Generate NEW random seed for this run
+                # This new seed will be stored in session state, becoming the 'current' one
+                st.session_state.current_seed = int(np.random.randint(1, 1000000))
+            
+            # CHECKED: Just use the existing st.session_state.current_seed
+            # (which might be 42, or a random one generated in a previous step)
+            run_seed = st.session_state.current_seed
+            params['seed'] = run_seed # Store in params for history tracking
+            
             vols, counts, initial_biomass, total_vols = generate_population(
                 params['mean_log10'], params['std_log10'], params['n_samples'],
                 params['concentration'], MEAN_PIXELS, STD_PIXELS, run_seed
