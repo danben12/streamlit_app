@@ -71,7 +71,6 @@ def configure_page():
         </style>
     """, unsafe_allow_html=True)
     
-    # --- RESTORED TITLE ---
     st.title("🦠 Growth-Lysis Micro-droplet Simulation")
     st.markdown("---")
 
@@ -640,6 +639,8 @@ def plot_heatmap(conc_grid, vol_centers, data_matrix):
     c_list = []
     w = (np.log10(vol_centers.max()) - np.log10(vol_centers.min())) / len(vol_centers)
     h = (conc_grid[1] - conc_grid[0]) if len(conc_grid) > 1 else 1.0
+    
+    data_list = []
 
     for i, conc in enumerate(conc_grid):
         for j, vol in enumerate(vol_centers):
@@ -648,6 +649,7 @@ def plot_heatmap(conc_grid, vol_centers, data_matrix):
                 x_list.append(np.log10(vol))
                 y_list.append(conc)
                 c_list.append(val)
+                data_list.append({'Volume': vol, 'Antibiotic_Conc': conc, 'Log2_FoldChange': val})
 
     source = ColumnDataSource(data={'x': x_list, 'y': y_list, 'fc': c_list, 'vol': 10**np.array(x_list)})
     mapper = linear_cmap(field_name='fc', palette=cc.CET_D1[::-1], low=-5, high=5)
@@ -667,13 +669,14 @@ def plot_heatmap(conc_grid, vol_centers, data_matrix):
     overrides = {}
     for i in range(15): overrides[i] = f"10{int_to_superscript(i)}"
     p.xaxis.major_label_overrides = overrides
-    return p
+    
+    df = pd.DataFrame(data_list)
+    return p, df
 
 def plot_mic_vs_volume(heatmap_data, params):
     matrix = heatmap_data['matrix']
     concs = heatmap_data['conc_grid']
     vols = heatmap_data['vol_centers']
-    # Hardcoded threshold
     death_thresh = 0.0 
     
     mic_values = []
@@ -705,7 +708,9 @@ def plot_mic_vs_volume(heatmap_data, params):
     hover = HoverTool(tooltips=[("Volume", "@vol{0,0}"), ("MIC", "@mic{0.00}")])
     p.add_tools(hover)
     p.legend.location = "top_right"
-    return p
+    
+    df = pd.DataFrame({'Volume': vol_values, 'MIC': mic_values})
+    return p, df
 
 def plot_survival_probability(t_eval, alive_bin_sums, bin_counts, bin_edges):
     p = figure(x_axis_label="Time (h)", y_axis_label="Survival Probability (%)",
@@ -716,18 +721,26 @@ def plot_survival_probability(t_eval, alive_bin_sums, bin_counts, bin_edges):
     colors = linear_palette(high_contrast_color_map, unique_bins) if unique_bins > 0 else []
     legend_items = []
     color_idx = 0
+    
+    data = {'Time_h': t_eval}
+    
     for i in range(len(bin_counts)):
         if bin_counts[i] > 0:
             alive_traj = (alive_bin_sums[i, :] / bin_counts[i]) * 100.0
             low_exp = int(np.log10(bin_edges[i]))
             high_exp = int(np.log10(bin_edges[i + 1]))
             label = f"10{int_to_superscript(low_exp)} - 10{int_to_superscript(high_exp)} (n={int(bin_counts[i])})"
+            
+            data[f"Bin_10^{low_exp}_to_10^{high_exp}_Survival_Pct"] = alive_traj
+            
             r = p.line(t_eval, alive_traj, line_color=colors[color_idx], line_width=3, alpha=0.9)
             legend_items.append((label, [r]))
             color_idx += 1
     legend = Legend(items=legend_items, title="Volume Bins", click_policy="hide")
     p.add_layout(legend, 'right')
-    return p
+    
+    df = pd.DataFrame(data)
+    return p, df
 
 def plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges, baseline_data=None):
     p = figure(x_axis_label="Time (h)", y_axis_label="Normalized Biomass (B/B₀)",
@@ -753,6 +766,9 @@ def plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges, baseline_data=None):
     colors = linear_palette(high_contrast_color_map, unique_bins) if unique_bins > 0 else []
     legend_items = []
     color_idx = 0
+    
+    data = {'Time_h': t_eval}
+    
     for i in range(len(bin_counts)):
         if bin_counts[i] > 0:
             mean_traj = bin_sums[i, :] / bin_counts[i]
@@ -762,6 +778,9 @@ def plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges, baseline_data=None):
             low_exp = int(np.log10(bin_edges[i]))
             high_exp = int(np.log10(bin_edges[i + 1]))
             label = f"10{int_to_superscript(low_exp)} - 10{int_to_superscript(high_exp)} (n={int(bin_counts[i])})"
+            
+            data[f"Bin_10^{low_exp}_to_10^{high_exp}_Norm_Biomass"] = norm_traj
+            
             r = p.line(t_eval, norm_traj, line_color=colors[color_idx], line_width=3, alpha=0.9)
             legend_items.append((label, [r]))
             color_idx += 1
@@ -772,10 +791,13 @@ def plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges, baseline_data=None):
     r_meta = p.line(t_eval, meta_norm, line_color="white", line_width=4,
                     line_dash="solid", alpha=1.0)
     legend_items.insert(0, ("Metapopulation (Avg)", [r_meta]))
+    data["Metapopulation_Norm_Biomass"] = meta_norm
     
     legend = Legend(items=legend_items, title="Volume Bins", click_policy="hide")
     p.add_layout(legend, 'right')
-    return p
+    
+    df = pd.DataFrame(data)
+    return p, df
 
 def plot_net_growth_dynamics(t_eval, net_rate_bin_sums, bin_counts, bin_edges):
     p = figure(x_axis_label="Time (h)", y_axis_label="Net Growth Rate (μ - λ) [1/h]",
@@ -788,18 +810,26 @@ def plot_net_growth_dynamics(t_eval, net_rate_bin_sums, bin_counts, bin_edges):
     legend_items = []
     zero_line = Span(location=0, dimension='width', line_color='white', line_dash='dotted', line_width=2)
     p.add_layout(zero_line)
+    
+    data = {'Time_h': t_eval}
+    
     for i in range(len(bin_counts)):
         if bin_counts[i] > 0:
             mean_net_rate = net_rate_bin_sums[i, :] / bin_counts[i]
             low_exp = int(np.log10(bin_edges[i]))
             high_exp = int(np.log10(bin_edges[i + 1]))
             label = f"10{int_to_superscript(low_exp)} - 10{int_to_superscript(high_exp)}"
+            
+            data[f"Bin_10^{low_exp}_to_10^{high_exp}_Net_Growth"] = mean_net_rate
+            
             r = p.line(t_eval, mean_net_rate, line_color=colors[color_idx], line_width=3, alpha=0.8)
             legend_items.append((label, [r]))
             color_idx += 1
     legend = Legend(items=legend_items, location="top_right", click_policy="hide", title="Volume Bins")
     p.add_layout(legend, 'right')
-    return p
+    
+    df = pd.DataFrame(data)
+    return p, df
 
 def plot_a_eff_dynamics(t_eval, a_eff_bin_sums, bin_counts, bin_edges, params):
     title_text = "Effective Antibiotic Conc. (Bound/Density)"
@@ -815,12 +845,18 @@ def plot_a_eff_dynamics(t_eval, a_eff_bin_sums, bin_counts, bin_edges, params):
     colors = linear_palette(high_contrast_color_map, max(1, unique_bins)) if unique_bins > 0 else []
     color_idx = 0
     legend_items = []
+    
+    data = {'Time_h': t_eval}
+    
     for i in range(len(bin_counts)):
         if bin_counts[i] > 0:
             mean_a_eff = a_eff_bin_sums[i, :] / bin_counts[i]
             low_exp = int(np.log10(bin_edges[i]))
             high_exp = int(np.log10(bin_edges[i + 1]))
             label = f"10{int_to_superscript(low_exp)} - 10{int_to_superscript(high_exp)}"
+            
+            data[f"Bin_10^{low_exp}_to_10^{high_exp}_A_eff"] = mean_a_eff
+            
             r = p.line(t_eval, mean_a_eff, line_color=colors[color_idx], line_width=3, alpha=0.8)
             legend_items.append((label, [r]))
             color_idx += 1
@@ -839,7 +875,9 @@ def plot_a_eff_dynamics(t_eval, a_eff_bin_sums, bin_counts, bin_edges, params):
     legend_items.insert(0, (f"{label_text} ({threshold_val:.0f})", [r_thresh_dummy]))
     legend = Legend(items=legend_items, location="top_right", click_policy="hide", title="Volume Bins")
     p.add_layout(legend, 'right')
-    return p
+    
+    df = pd.DataFrame(data)
+    return p, df
 
 def plot_density_dynamics(t_eval, density_bin_sums, bin_counts, bin_edges):
     p = figure(x_axis_label="Time (h)", y_axis_label="Cell Density (Biomass/Volume)",
@@ -850,6 +888,9 @@ def plot_density_dynamics(t_eval, density_bin_sums, bin_counts, bin_edges):
     colors = linear_palette(high_contrast_color_map, max(1, unique_bins)) if unique_bins > 0 else []
     color_idx = 0
     legend_items = []
+    
+    data = {'Time_h': t_eval}
+    
     for i in range(len(bin_counts)):
         if bin_counts[i] > 0:
             mean_vals = density_bin_sums[i, :] / bin_counts[i]
@@ -857,12 +898,17 @@ def plot_density_dynamics(t_eval, density_bin_sums, bin_counts, bin_edges):
             low_exp = int(np.log10(bin_edges[i]))
             high_exp = int(np.log10(bin_edges[i + 1]))
             label = f"10{int_to_superscript(low_exp)} - 10{int_to_superscript(high_exp)}"
+            
+            data[f"Bin_10^{low_exp}_to_10^{high_exp}_Density"] = mean_vals
+            
             r = p.line(t_eval, mean_vals, line_color=colors[color_idx], line_width=3, alpha=0.8)
             legend_items.append((label, [r]))
             color_idx += 1
     legend = Legend(items=legend_items, location="top_right", click_policy="hide", title="Volume Bins")
     p.add_layout(legend, 'right')
-    return p
+    
+    df = pd.DataFrame(data)
+    return p, df
 
 def plot_substrate_dynamics(t_eval, s_bin_sums, bin_counts, bin_edges):
     p = figure(x_axis_label="Time (h)", y_axis_label="Substrate Concentration (S)",
@@ -873,18 +919,26 @@ def plot_substrate_dynamics(t_eval, s_bin_sums, bin_counts, bin_edges):
     colors = linear_palette(high_contrast_color_map, max(1, unique_bins)) if unique_bins > 0 else []
     color_idx = 0
     legend_items = []
+    
+    data = {'Time_h': t_eval}
+    
     for i in range(len(bin_counts)):
         if bin_counts[i] > 0:
             mean_vals = s_bin_sums[i, :] / bin_counts[i]
             low_exp = int(np.log10(bin_edges[i]))
             high_exp = int(np.log10(bin_edges[i + 1]))
             label = f"10{int_to_superscript(low_exp)} - 10{int_to_superscript(high_exp)}"
+            
+            data[f"Bin_10^{low_exp}_to_10^{high_exp}_Substrate"] = mean_vals
+            
             r = p.line(t_eval, mean_vals, line_color=colors[color_idx], line_width=3, alpha=0.8)
             legend_items.append((label, [r]))
             color_idx += 1
     legend = Legend(items=legend_items, location="top_right", click_policy="hide", title="Volume Bins")
     p.add_layout(legend, 'right')
-    return p
+    
+    df = pd.DataFrame(data)
+    return p, df
 
 def plot_abound_dynamics(t_eval, abound_bin_sums, bin_counts, bin_edges):
     p = figure(x_axis_label="Time (h)", y_axis_label="Bound Antibiotic (Molecules/Droplet)",
@@ -895,18 +949,26 @@ def plot_abound_dynamics(t_eval, abound_bin_sums, bin_counts, bin_edges):
     colors = linear_palette(high_contrast_color_map, max(1, unique_bins)) if unique_bins > 0 else []
     color_idx = 0
     legend_items = []
+    
+    data = {'Time_h': t_eval}
+    
     for i in range(len(bin_counts)):
         if bin_counts[i] > 0:
             mean_vals = abound_bin_sums[i, :] / bin_counts[i]
             low_exp = int(np.log10(bin_edges[i]))
             high_exp = int(np.log10(bin_edges[i + 1]))
             label = f"10{int_to_superscript(low_exp)} - 10{int_to_superscript(high_exp)}"
+            
+            data[f"Bin_10^{low_exp}_to_10^{high_exp}_Bound_Ab"] = mean_vals
+            
             r = p.line(t_eval, mean_vals, line_color=colors[color_idx], line_width=3, alpha=0.8)
             legend_items.append((label, [r]))
             color_idx += 1
     legend = Legend(items=legend_items, location="top_right", click_policy="hide", title="Volume Bins")
     p.add_layout(legend, 'right')
-    return p
+    
+    df = pd.DataFrame(data)
+    return p, df
 
 def plot_distribution(total_vols, occupied_vols):
     min_exp = int(np.floor(np.log10(total_vols.min())))
@@ -922,7 +984,14 @@ def plot_distribution(total_vols, occupied_vols):
     p.quad(top=hist_occ, bottom=0, left=edges_linear[:-1], right=edges_linear[1:],
            fill_color="#718dbf", line_color="white", alpha=0.6, legend_label="Occupied Droplets")
     p.legend.location = "top_right"
-    return p
+    
+    df = pd.DataFrame({
+        'Bin_Start_Volume': edges_linear[:-1],
+        'Bin_End_Volume': edges_linear[1:],
+        'Frequency_Total': hist_total,
+        'Frequency_Occupied': hist_occ
+    })
+    return p, df
 
 def plot_initial_density_vc(df_density, vc_val, theoretical_density):
     source = ColumnDataSource(df_density)
@@ -945,7 +1014,7 @@ def plot_initial_density_vc(df_density, vc_val, theoretical_density):
         LegendItem(label='Vc', renderers=[r_vc_dum])
     ], location='top_right')
     p.add_layout(legend)
-    return p
+    return p, df_density
 
 def plot_fold_change(vols, initial_biomass, final_biomass, vc_val):
     min_fc = -6.0
@@ -1018,7 +1087,7 @@ def plot_n0_vs_volume(df, Vc):
         'background-color': '#f0f2f6', 'border': '1px solid #ccc',
         'padding': '15px', 'border-radius': '10px', 'box-shadow': '2px 2px 5px rgba(0,0,0,0.1)'
     }
-    return column(p, stats_div)
+    return column(p, stats_div), df
 
 def convert_df(df):
     return df.to_csv(index=False).encode('utf-8')
@@ -1207,50 +1276,68 @@ def main():
 
             with st.container():
                 p = None
+                df_download = None
+                file_name = "data.csv"
                 
                 if selected_plot == "Growth/Death Heatmap": 
                     if st.session_state.get("heatmap_data"):
                         hd = st.session_state.heatmap_data
-                        p = plot_heatmap(hd["conc_grid"], hd["vol_centers"], hd["matrix"])
+                        p, df_download = plot_heatmap(hd["conc_grid"], hd["vol_centers"], hd["matrix"])
+                        file_name = "heatmap_data.csv"
                     else:
                         st.warning("Heatmap data unavailable. Please Run Simulation.")
 
                 elif selected_plot == "Survival Probability":
-                    p = plot_survival_probability(t_eval, alive_bin_sums, bin_counts, bin_edges)
+                    p, df_download = plot_survival_probability(t_eval, alive_bin_sums, bin_counts, bin_edges)
+                    file_name = "survival_probability.csv"
                 elif selected_plot == "MIC vs Volume (Inoculum Effect)":
                     if st.session_state.get("heatmap_data"):
-                        p = plot_mic_vs_volume(st.session_state.heatmap_data, data["params"])
+                        p, df_download = plot_mic_vs_volume(st.session_state.heatmap_data, data["params"])
+                        file_name = "mic_vs_volume.csv"
                     else:
                         st.warning("Heatmap data unavailable. Please Run Simulation.")
                 elif selected_plot == "Population Dynamics":
-                    p = plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges, st.session_state.baseline_results)
+                    p, df_download = plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges, st.session_state.baseline_results)
+                    file_name = "population_dynamics.csv"
                 elif selected_plot == "Droplet Distribution":
-                    p = plot_distribution(data["total_vols"], data["vols"])
+                    p, df_download = plot_distribution(data["total_vols"], data["vols"])
+                    file_name = "droplet_distribution.csv"
                 elif selected_plot == "Initial Density & Vc":
-                    p = plot_initial_density_vc(data["df_density"], data["vc_val"], data["params"]['concentration'])
+                    p, df_download = plot_initial_density_vc(data["df_density"], data["vc_val"], data["params"]['concentration'])
+                    file_name = "initial_density_vc.csv"
                 elif selected_plot == "Fold Change":
-                    p, df_fc = plot_fold_change(data["vols"], data["initial_biomass"], final_biomass, data["vc_val"])
-                    st.download_button("📥 Download CSV", data=convert_df(df_fc), file_name="fold_change_data.csv", mime="text/csv")
+                    p, df_download = plot_fold_change(data["vols"], data["initial_biomass"], final_biomass, data["vc_val"])
+                    file_name = "fold_change_data.csv"
                 elif selected_plot == "N0 vs Volume":
-                    p = plot_n0_vs_volume(data["df_density"], data["vc_val"])
+                    p, df_download = plot_n0_vs_volume(data["df_density"], data["vc_val"])
+                    file_name = "n0_vs_volume.csv"
                 elif selected_plot == "Net Growth Rate (μ - λ)":
-                    p = plot_net_growth_dynamics(t_eval, net_rate_bin_sums, bin_counts, bin_edges)
+                    p, df_download = plot_net_growth_dynamics(t_eval, net_rate_bin_sums, bin_counts, bin_edges)
+                    file_name = "net_growth_rate.csv"
                 elif selected_plot == "Substrate Dynamics":
-                    p = plot_substrate_dynamics(t_eval, s_bin_sums, bin_counts, bin_edges)
+                    p, df_download = plot_substrate_dynamics(t_eval, s_bin_sums, bin_counts, bin_edges)
+                    file_name = "substrate_dynamics.csv"
                 elif selected_plot == "Antibiotic Dynamics":
-                    p = plot_a_eff_dynamics(t_eval, a_eff_bin_sums, bin_counts, bin_edges, data["params"])
+                    p, df_download = plot_a_eff_dynamics(t_eval, a_eff_bin_sums, bin_counts, bin_edges, data["params"])
+                    file_name = "antibiotic_dynamics.csv"
                 elif selected_plot == "Density Dynamics":
-                    p = plot_density_dynamics(t_eval, density_bin_sums, bin_counts, bin_edges)
+                    p, df_download = plot_density_dynamics(t_eval, density_bin_sums, bin_counts, bin_edges)
+                    file_name = "density_dynamics.csv"
                 elif selected_plot == "Bound Antibiotic":
                     if data["params"]['model'] == "Linear Lysis Rate":
                         st.warning("This model does not simulate binding kinetics.")
                         p = None
+                        df_download = None
                     else:
-                        p = plot_abound_dynamics(t_eval, a_bound_bin_sums, bin_counts, bin_edges)
+                        p, df_download = plot_abound_dynamics(t_eval, a_bound_bin_sums, bin_counts, bin_edges)
+                        file_name = "bound_antibiotic_dynamics.csv"
 
                 # --- RENDER ALL PLOTS HERE ---
                 if p is not None:
                     streamlit_bokeh(p, use_container_width=True)
+                
+                if df_download is not None:
+                    st.download_button("📥 Download CSV", data=convert_df(df_download), file_name=file_name, mime="text/csv")
 
     with tab_hist:
         st.subheader("Simulation History")
