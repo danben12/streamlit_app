@@ -137,6 +137,7 @@ def load_params_from_history(row):
     mapping = {
         'model': 'model_select',
         'sim_mode': 'sim_mode_select',
+        'fix_seed': 'fix_seed_checkbox',
         't_start': 't_start', 't_end': 't_end', 'dt': 'dt',
         'mean_log10': 'mean_log10', 'std_log10': 'std_log10', 'n_samples': 'n_samples',
         'conc_exp_ml': 'conc_exp_ml',  # Updated key
@@ -301,6 +302,9 @@ def render_sidebar():
         # CONVERSION: cells/mL -> cells/µm³ (divide by 10^12)
         params['concentration'] = (10 ** params['conc_exp_ml']) / 1e12
 
+        # Checkbox for fixed/random seed - Placed INSIDE the expander
+        params['fix_seed'] = st.checkbox("Fix Random Seed (Reproducible)", value=st.session_state.get('fix_seed_checkbox', True), key='fix_seed_checkbox')
+
     # 3. Biology
     with st.sidebar.expander("🧫 Bacterial Physiology", expanded=False):
         c1, c2 = st.columns(2)
@@ -348,8 +352,8 @@ def render_sidebar():
 # ==========================================
 
 @njit(cache=True)
-def _generate_volumes_deterministic(n, mean, std):
-    np.random.seed(42)  # Hardcoded seed for consistent landscape
+def _generate_volumes_deterministic(n, mean, std, seed):
+    np.random.seed(seed)  # Seed controlled by user param
     log_data = np.random.normal(mean, std, int(n))
     volume_data = 10 ** log_data
     mask_vol = (volume_data >= 1000) & (volume_data <= 1e8)
@@ -357,8 +361,8 @@ def _generate_volumes_deterministic(n, mean, std):
     return trimmed_vol
 
 @njit(cache=True, parallel=True, fastmath=True)
-def _occupy_droplets_parallel(trimmed_vol, conc, mean_pix, std_pix):
-    np.random.seed(42) # Ensure consistent noise generation
+def _occupy_droplets_parallel(trimmed_vol, conc, mean_pix, std_pix, seed):
+    np.random.seed(seed) # Seed controlled by user param
     lambdas = trimmed_vol * conc
     cell_counts = np.zeros(len(lambdas), dtype=np.int64)
     for i in prange(len(lambdas)):
@@ -376,9 +380,9 @@ def _occupy_droplets_parallel(trimmed_vol, conc, mean_pix, std_pix):
     return final_vols, final_counts, final_biomass
 
 @st.cache_data(show_spinner="Generating population...")
-def generate_population(mean, std, n, conc, mean_pix, std_pix):
-    total_vols = _generate_volumes_deterministic(n, mean, std)
-    final_vols, final_counts, final_biomass = _occupy_droplets_parallel(total_vols, conc, mean_pix, std_pix)
+def generate_population(mean, std, n, conc, mean_pix, std_pix, seed):
+    total_vols = _generate_volumes_deterministic(n, mean, std, seed)
+    final_vols, final_counts, final_biomass = _occupy_droplets_parallel(total_vols, conc, mean_pix, std_pix, seed)
     return final_vols, final_counts, final_biomass, total_vols
 
 def calculate_vc_and_density(vols, biomass, theoretical_conc, mean_pix):
@@ -1185,9 +1189,16 @@ def main():
         
         # --- A. RUN MAIN SIMULATION ---
         with st.spinner("Processing main droplet population..."):
+            
+            # Determine seed based on checkbox
+            if params['fix_seed']:
+                run_seed = 42
+            else:
+                run_seed = np.random.randint(1, 1000000)
+                
             vols, counts, initial_biomass, total_vols = generate_population(
                 params['mean_log10'], params['std_log10'], params['n_samples'],
-                params['concentration'], MEAN_PIXELS, STD_PIXELS
+                params['concentration'], MEAN_PIXELS, STD_PIXELS, run_seed
             )
             sort_idx = np.argsort(vols)
             vols = vols[sort_idx]
