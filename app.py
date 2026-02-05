@@ -1333,11 +1333,11 @@ def main():
                         file_name = "bound_antibiotic_dynamics.csv"
 
                 # --- RENDER ALL PLOTS HERE ---
-                if p is not None:
-                    streamlit_bokeh(p, use_container_width=True)
-                
                 if df_download is not None:
                     st.download_button("📥 Download CSV", data=convert_df(df_download), file_name=file_name, mime="text/csv")
+
+                if p is not None:
+                    streamlit_bokeh(p, use_container_width=True)
 
     with tab_hist:
         st.subheader("Simulation History")
