@@ -1181,11 +1181,13 @@ def plot_probability_landscape(vols, values, y_label="Cell Count (N)"):
     # 4. Prepare Data for Bokeh
     left, right, bottom, top = [], [], [], []
     probability = []
+    droplet_counts = []  # New list for counts
     vol_labels, y_labels = [], []
 
     for i in range(len(vol_bins) - 1):
         for j in range(len(val_bins) - 1):
             p_val = probs[i, j]
+            count_val = hist_counts[i, j] # Get the count
             if p_val > 0:
                 l = vol_bins[i]
                 r = vol_bins[i+1]
@@ -1197,6 +1199,7 @@ def plot_probability_landscape(vols, values, y_label="Cell Count (N)"):
                 bottom.append(b)
                 top.append(t)
                 probability.append(p_val)
+                droplet_counts.append(int(count_val)) # Add count
 
                 # Labels
                 exp_l = int(np.log10(l))
@@ -1211,7 +1214,8 @@ def plot_probability_landscape(vols, values, y_label="Cell Count (N)"):
 
     source = ColumnDataSource(data={
         'left': left, 'right': right, 'bottom': bottom, 'top': top,
-        'probability': probability, 'vol_label': vol_labels, 'y_label': y_labels
+        'probability': probability, 'droplet_count': droplet_counts, # Add to source
+        'vol_label': vol_labels, 'y_label': y_labels
     })
 
     # Determine color limits from data
@@ -1253,7 +1257,8 @@ def plot_probability_landscape(vols, values, y_label="Cell Count (N)"):
     hover = HoverTool(tooltips=[
         ("Volume Range", "@vol_label μm³"),
         (y_label, "@y_label"),
-        ("Probability", "@probability{0.1f}%")
+        ("Probability", "@probability{0.1f}%"),
+        ("Droplet Count", "@droplet_count") # Add to hover
     ])
     p.add_tools(hover)
 
