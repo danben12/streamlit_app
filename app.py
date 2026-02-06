@@ -1247,19 +1247,26 @@ def plot_probability_landscape(vols, values, y_label="Cell Count (N)"):
         xaxis_overrides[v] = f"10{int_to_superscript(exp)}"
     p.xaxis.major_label_overrides = xaxis_overrides
 
-    p.quad(left='left', right='right', bottom='bottom', top='top', source=source,
+    # Capture the renderer object to link it to the hover tool
+    quad_renderer = p.quad(left='left', right='right', bottom='bottom', top='top', source=source,
            fill_color={'field': 'probability', 'transform': mapper},
            line_color='white', line_width=0.5, fill_alpha=1.0)
 
     color_bar = ColorBar(color_mapper=mapper, label_standoff=12, border_line_color=None, location=(0,0), title="Probability (%)")
     p.add_layout(color_bar, 'right')
 
-    hover = HoverTool(tooltips=[
-        ("Volume Range", "@vol_label μm³"),
-        (y_label, "@y_label"),
-        ("Probability", "@probability{0.1f}%"),
-        ("Droplet Count", "@droplet_count") # Add to hover
-    ])
+    # UPDATED HOVER TOOL
+    # Explicitly linked to the quad_renderer and using mode='mouse' for better responsiveness
+    hover = HoverTool(
+        renderers=[quad_renderer],
+        tooltips=[
+            ("Volume Range", "@vol_label μm³"),
+            (y_label, "@y_label"),
+            ("Probability", "@probability{0.1f}%"),
+            ("Droplet Count", "@droplet_count")
+        ],
+        mode='mouse'
+    )
     p.add_tools(hover)
 
     # Dataframe for export
