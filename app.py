@@ -3,9 +3,9 @@ import numpy as np
 import pandas as pd
 from scipy.integrate import odeint
 from bokeh.plotting import figure
-from bokeh.models import ColumnDataSource, HoverTool, Legend, LegendItem, Span, Div, ColorBar
+from bokeh.models import ColumnDataSource, HoverTool, Legend, LegendItem, Span, Div, ColorBar, LinearColorMapper, FixedTicker
 from bokeh.transform import linear_cmap
-from bokeh.palettes import linear_palette
+from bokeh.palettes import linear_palette, Turbo256
 import colorcet as cc
 from streamlit_bokeh import streamlit_bokeh
 from scipy.stats import linregress
@@ -27,6 +27,7 @@ PLOT_OPTIONS = {
     "Droplet Distribution": "Histogram comparing total droplet sizes vs. occupied droplet sizes.",
     "Initial Density & Vc": "Scatter plot of initial bacterial density vs volume, identifying the Critical Volume (Vc).",
     "N0 vs Volume": "Initial biomass (N0) plotted against Droplet Volume.",
+    "Probability Landscape": "Heatmap showing the probability of specific cell counts for given droplet volumes.",
 
     # --- Group III: Mechanisms (The "Why" - Time Series) ---
     "Net Growth Rate (μ - λ)": "The net growth rate (Growth μ - Lysis λ) over time.",
@@ -961,6 +962,7 @@ def plot_substrate_dynamics(t_eval, s_bin_sums, bin_counts, bin_edges):
     for i in range(len(bin_counts)):
         if bin_counts[i] > 0:
             mean_vals = s_bin_sums[i, :] / bin_counts[i]
+            mean_vals = np.where(mean_vals <= 0, np.nan, mean_vals)
             low_exp = int(np.log10(bin_edges[i]))
             high_exp = int(np.log10(bin_edges[i + 1]))
             label = f"10{int_to_superscript(low_exp)} - 10{int_to_superscript(high_exp)}"
@@ -1142,6 +1144,126 @@ def plot_n0_vs_volume(df, Vc, sim_mode="Biomass Mode"):
         'padding': '15px', 'border-radius': '10px', 'box-shadow': '2px 2px 5px rgba(0,0,0,0.1)'
     }
     return column(p, stats_div), df
+
+def plot_probability_landscape(vols, counts):
+    # Construct DataFrame
+    df = pd.DataFrame({
+        'Volume': vols,
+        'Cell_Count': counts
+    })
+
+    # 1. Define Bins
+    # Volume: Strictly powers of 10 from 10^3 to 10^8
+    # NOTE: The simulation generates volumes between 1000 and 1e8.
+    vol_bins = np.logspace(3, 8, 6) # [1e3, 1e4, 1e5, 1e6, 1e7, 1e8]
+
+    # Cell Count: DISCRETE STRATEGY
+    max_count = int(df['Cell_Count'].max())
+    if max_count == 0:
+        # Handle empty case
+        cell_bins = np.arange(1, 2)
+    else:
+        cell_bins = np.arange(1, max_count + 2)
+
+    # 2. Compute 2D Histogram
+    hist_counts, _, _ = np.histogram2d(
+        df['Volume'],
+        df['Cell_Count'],
+        bins=[vol_bins, cell_bins]
+    )
+
+    # 3. Normalize
+    vol_bin_sums = hist_counts.sum(axis=1)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        probs = (hist_counts / vol_bin_sums[:, None]) * 100
+
+    # 4. Prepare Data for Bokeh
+    left, right, bottom, top = [], [], [], []
+    probability = []
+    vol_labels, cell_labels = [], []
+
+    for i in range(len(vol_bins) - 1):
+        for j in range(len(cell_bins) - 1):
+            p_val = probs[i, j]
+            if p_val > 0:
+                l = vol_bins[i]
+                r = vol_bins[i+1]
+                b = cell_bins[j]
+                t = cell_bins[j+1]
+
+                left.append(l)
+                right.append(r)
+                bottom.append(b)
+                top.append(t)
+                probability.append(p_val)
+
+                # Labels
+                exp_l = int(np.log10(l))
+                exp_r = int(np.log10(r))
+                # Use existing helper int_to_superscript
+                label_l = f"10{int_to_superscript(exp_l)}"
+                label_r = f"10{int_to_superscript(exp_r)}"
+                vol_labels.append(f"{label_l} - {label_r}")
+
+                b_int = int(b)
+                cell_labels.append(f"{b_int}")
+
+    source = ColumnDataSource(data={
+        'left': left, 'right': right, 'bottom': bottom, 'top': top,
+        'probability': probability, 'vol_label': vol_labels, 'cell_label': cell_labels
+    })
+
+    # 5. Create Plot
+    mapper = LinearColorMapper(palette=Turbo256, low=0, high=100)
+
+    p = figure(
+        title="Probability Landscape: P(Cell Count | Volume)",
+        x_axis_type="log",
+        y_axis_type="log",
+        x_axis_label="Droplet Volume (μm³)",
+        y_axis_label="Cell Count (N)",
+        width=1200, height=800, # Match other app plots
+        tools="pan,wheel_zoom,reset,save"
+    )
+
+    # Ticker
+    p.xaxis.ticker = FixedTicker(ticks=vol_bins)
+    xaxis_overrides = {}
+    for v in vol_bins:
+        exp = int(np.log10(v))
+        xaxis_overrides[v] = f"10{int_to_superscript(exp)}"
+    p.xaxis.major_label_overrides = xaxis_overrides
+
+    p.quad(left='left', right='right', bottom='bottom', top='top', source=source,
+           fill_color={'field': 'probability', 'transform': mapper},
+           line_color='white', line_width=0.5, fill_alpha=1.0)
+
+    color_bar = ColorBar(color_mapper=mapper, label_standoff=12, border_line_color=None, location=(0,0), title="Probability (%)")
+    p.add_layout(color_bar, 'right')
+
+    hover = HoverTool(tooltips=[
+        ("Volume Range", "@vol_label μm³"),
+        ("Cell Count", "@cell_label"),
+        ("Probability", "@probability{0.1f}%")
+    ])
+    p.add_tools(hover)
+
+    # Dataframe for export
+    # Recreate tidy table format used in notebook
+    vol_labels_val = [f"10^{int(np.log10(v1))}-10^{int(np.log10(v2))}" for v1, v2 in zip(vol_bins[:-1], vol_bins[1:])]
+    cell_labels_val = [str(int(c)) for c in cell_bins[:-1]]
+    
+    # Need to handle empty bins if max_count was 0
+    if max_count == 0:
+         probs_matrix = np.zeros((1, len(vol_labels_val)))
+    else:
+         probs_matrix = probs.T
+
+    df_val = pd.DataFrame(probs_matrix, index=cell_labels_val, columns=vol_labels_val)
+    df_val = df_val.dropna(axis=1, how='all').fillna(0)
+    
+    # Return as tidy format for download
+    return p, df_val.reset_index().rename(columns={'index': 'Cell_Count'})
 
 def convert_df(df):
     return df.to_csv(index=False).encode('utf-8')
@@ -1404,6 +1526,9 @@ def main():
                     else:
                         p, df_download = plot_abound_dynamics(t_eval, a_bound_bin_sums, bin_counts, bin_edges)
                         file_name = f"bound_antibiotic_dynamics_{timestamp_str}.csv"
+                elif selected_plot == "Probability Landscape":
+                    p, df_download = plot_probability_landscape(data["vols"], data["counts"])
+                    file_name = f"probability_landscape_{timestamp_str}.csv"
 
                 # --- RENDER ALL PLOTS HERE ---
                 if df_download is not None:
@@ -1444,4 +1569,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
