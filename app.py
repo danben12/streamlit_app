@@ -27,7 +27,7 @@ PLOT_OPTIONS = {
     "Droplet Distribution": "Histogram comparing total droplet sizes vs. occupied droplet sizes.",
     "Initial Density & Vc": "Scatter plot of initial bacterial density vs volume, identifying the Critical Volume (Vc).",
     "N0 vs Volume": "Initial biomass (N0) plotted against Droplet Volume.",
-    "Probability Landscape": "Heatmap showing the probability of specific cell counts for given droplet volumes.",
+    "Probability Landscape": "Heatmap showing the probability of specific cell counts/biomass for given droplet volumes.",
 
     # --- Group III: Mechanisms (The "Why" - Time Series) ---
     "Net Growth Rate (μ - λ)": "The net growth rate (Growth μ - Lysis λ) over time.",
@@ -1145,11 +1145,11 @@ def plot_n0_vs_volume(df, Vc, sim_mode="Biomass Mode"):
     }
     return column(p, stats_div), df
 
-def plot_probability_landscape(vols, counts):
+def plot_probability_landscape(vols, values, y_label="Cell Count (N)"):
     # Construct DataFrame
     df = pd.DataFrame({
         'Volume': vols,
-        'Cell_Count': counts
+        'Value': values
     })
 
     # 1. Define Bins
@@ -1157,19 +1157,20 @@ def plot_probability_landscape(vols, counts):
     # NOTE: The simulation generates volumes between 1000 and 1e8.
     vol_bins = np.logspace(3, 8, 6) # [1e3, 1e4, 1e5, 1e6, 1e7, 1e8]
 
-    # Cell Count: DISCRETE STRATEGY
-    max_count = int(df['Cell_Count'].max())
-    if max_count == 0:
+    # Value (Cell Count or Biomass): DISCRETE STRATEGY
+    # We use discrete integer bins because biomass is rounded to nearest integer in generation
+    max_val = int(df['Value'].max())
+    if max_val == 0:
         # Handle empty case
-        cell_bins = np.arange(1, 2)
+        val_bins = np.arange(1, 2)
     else:
-        cell_bins = np.arange(1, max_count + 2)
+        val_bins = np.arange(1, max_val + 2)
 
     # 2. Compute 2D Histogram
     hist_counts, _, _ = np.histogram2d(
         df['Volume'],
-        df['Cell_Count'],
-        bins=[vol_bins, cell_bins]
+        df['Value'],
+        bins=[vol_bins, val_bins]
     )
 
     # 3. Normalize
@@ -1180,16 +1181,16 @@ def plot_probability_landscape(vols, counts):
     # 4. Prepare Data for Bokeh
     left, right, bottom, top = [], [], [], []
     probability = []
-    vol_labels, cell_labels = [], []
+    vol_labels, y_labels = [], []
 
     for i in range(len(vol_bins) - 1):
-        for j in range(len(cell_bins) - 1):
+        for j in range(len(val_bins) - 1):
             p_val = probs[i, j]
             if p_val > 0:
                 l = vol_bins[i]
                 r = vol_bins[i+1]
-                b = cell_bins[j]
-                t = cell_bins[j+1]
+                b = val_bins[j]
+                t = val_bins[j+1]
 
                 left.append(l)
                 right.append(r)
@@ -1206,22 +1207,22 @@ def plot_probability_landscape(vols, counts):
                 vol_labels.append(f"{label_l} - {label_r}")
 
                 b_int = int(b)
-                cell_labels.append(f"{b_int}")
+                y_labels.append(f"{b_int}")
 
     source = ColumnDataSource(data={
         'left': left, 'right': right, 'bottom': bottom, 'top': top,
-        'probability': probability, 'vol_label': vol_labels, 'cell_label': cell_labels
+        'probability': probability, 'vol_label': vol_labels, 'y_label': y_labels
     })
 
     # 5. Create Plot
     mapper = LinearColorMapper(palette=Turbo256, low=0, high=100)
 
     p = figure(
-        title="Probability Landscape: P(Cell Count | Volume)",
+        title=f"Probability Landscape: P({y_label} | Volume)",
         x_axis_type="log",
         y_axis_type="log",
         x_axis_label="Droplet Volume (μm³)",
-        y_axis_label="Cell Count (N)",
+        y_axis_label=y_label,
         width=1200, height=800, # Match other app plots
         tools="pan,wheel_zoom,reset,save"
     )
@@ -1243,7 +1244,7 @@ def plot_probability_landscape(vols, counts):
 
     hover = HoverTool(tooltips=[
         ("Volume Range", "@vol_label μm³"),
-        ("Cell Count", "@cell_label"),
+        (y_label, "@y_label"),
         ("Probability", "@probability{0.1f}%")
     ])
     p.add_tools(hover)
@@ -1251,19 +1252,19 @@ def plot_probability_landscape(vols, counts):
     # Dataframe for export
     # Recreate tidy table format used in notebook
     vol_labels_val = [f"10^{int(np.log10(v1))}-10^{int(np.log10(v2))}" for v1, v2 in zip(vol_bins[:-1], vol_bins[1:])]
-    cell_labels_val = [str(int(c)) for c in cell_bins[:-1]]
+    y_labels_val = [str(int(c)) for c in val_bins[:-1]]
     
-    # Need to handle empty bins if max_count was 0
-    if max_count == 0:
+    # Need to handle empty bins if max_val was 0
+    if max_val == 0:
          probs_matrix = np.zeros((1, len(vol_labels_val)))
     else:
          probs_matrix = probs.T
 
-    df_val = pd.DataFrame(probs_matrix, index=cell_labels_val, columns=vol_labels_val)
+    df_val = pd.DataFrame(probs_matrix, index=y_labels_val, columns=vol_labels_val)
     df_val = df_val.dropna(axis=1, how='all').fillna(0)
     
     # Return as tidy format for download
-    return p, df_val.reset_index().rename(columns={'index': 'Cell_Count'})
+    return p, df_val.reset_index().rename(columns={'index': y_label})
 
 def convert_df(df):
     return df.to_csv(index=False).encode('utf-8')
@@ -1527,7 +1528,10 @@ def main():
                         p, df_download = plot_abound_dynamics(t_eval, a_bound_bin_sums, bin_counts, bin_edges)
                         file_name = f"bound_antibiotic_dynamics_{timestamp_str}.csv"
                 elif selected_plot == "Probability Landscape":
-                    p, df_download = plot_probability_landscape(data["vols"], data["counts"])
+                    if sim_mode == "Single Cell Mode":
+                        p, df_download = plot_probability_landscape(data["vols"], data["counts"], y_label="Cell Count (N)")
+                    else:
+                        p, df_download = plot_probability_landscape(data["vols"], data["initial_biomass"], y_label="Biomass (AU)")
                     file_name = f"probability_landscape_{timestamp_str}.csv"
 
                 # --- RENDER ALL PLOTS HERE ---
