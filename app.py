@@ -1183,6 +1183,8 @@ def plot_probability_landscape(vols, values, y_label="Cell Count (N)"):
     probability = []
     droplet_counts = []  # New list for counts
     vol_labels, y_labels = [], []
+    # Center coordinates for invisible hit-testing scatter points
+    x_centers, y_centers = [], []
 
     for i in range(len(vol_bins) - 1):
         for j in range(len(val_bins) - 1):
@@ -1201,6 +1203,14 @@ def plot_probability_landscape(vols, values, y_label="Cell Count (N)"):
                 probability.append(p_val)
                 droplet_counts.append(int(count_val)) # Add count
 
+                # Calculate geometric centers for better hover detection on log scales
+                # Ensure values > 0 for log-log plot centers
+                if l > 0 and r > 0: x_centers.append(np.sqrt(l * r))
+                else: x_centers.append((l+r)/2)
+                
+                if b > 0 and t > 0: y_centers.append(np.sqrt(b * t))
+                else: y_centers.append((b+t)/2)
+
                 # Labels
                 exp_l = int(np.log10(l))
                 exp_r = int(np.log10(r))
@@ -1214,8 +1224,9 @@ def plot_probability_landscape(vols, values, y_label="Cell Count (N)"):
 
     source = ColumnDataSource(data={
         'left': left, 'right': right, 'bottom': bottom, 'top': top,
-        'probability': probability, 'droplet_count': droplet_counts, # Add to source
-        'vol_label': vol_labels, 'y_label': y_labels
+        'probability': probability, 'droplet_count': droplet_counts, 
+        'vol_label': vol_labels, 'y_label': y_labels,
+        'x_c': x_centers, 'y_c': y_centers
     })
 
     # Determine color limits from data
@@ -1252,13 +1263,18 @@ def plot_probability_landscape(vols, values, y_label="Cell Count (N)"):
            fill_color={'field': 'probability', 'transform': mapper},
            line_color='white', line_width=0.5, fill_alpha=1.0)
 
+    # Add invisible scatter points to help HoverTool detect thin bins
+    scatter_renderer = p.scatter(x='x_c', y='y_c', size=15, source=source,
+                                 fill_alpha=0, line_alpha=0) # Invisible but interactive
+
     color_bar = ColorBar(color_mapper=mapper, label_standoff=12, border_line_color=None, location=(0,0), title="Probability (%)")
     p.add_layout(color_bar, 'right')
 
     # UPDATED HOVER TOOL
-    # Explicitly linked to the quad_renderer and using mode='mouse' for better responsiveness
+    # Explicitly linked to BOTH renderers.
+    # If the mouse hits the invisible scatter bubble OR the rectangle, it triggers.
     hover = HoverTool(
-        renderers=[quad_renderer],
+        renderers=[quad_renderer, scatter_renderer],
         tooltips=[
             ("Volume Range", "@vol_label μm³"),
             (y_label, "@y_label"),
