@@ -1275,12 +1275,14 @@ def plot_probability_landscape(vols, values, y_label="Cell Count (N)"):
     # If the mouse hits the invisible scatter bubble OR the rectangle, it triggers.
     hover = HoverTool(
         renderers=[quad_renderer, scatter_renderer],
-        tooltips=[
-            ("Volume Range", "@vol_label μm³"),
-            (y_label, "@y_label"),
-            ("Probability", "@probability{0.1f}%"),
-            ("Droplet Count", "@droplet_count")
-        ],
+        tooltips=f"""
+            <div style="text-align: left; font-family: sans-serif; font-size: 12px;">
+                <div><span style="font-weight: bold;">Volume Range:</span> @vol_label μm³</div>
+                <div><span style="font-weight: bold;">{y_label}:</span> @y_label</div>
+                <div><span style="font-weight: bold;">Probability:</span> @probability{{0.1f}}%</div>
+                <div><span style="font-weight: bold;">Droplet Count:</span> @droplet_count</div>
+            </div>
+        """,
         mode='mouse'
     )
     p.add_tools(hover)
@@ -1609,3 +1611,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
