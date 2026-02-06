@@ -1214,8 +1214,16 @@ def plot_probability_landscape(vols, values, y_label="Cell Count (N)"):
         'probability': probability, 'vol_label': vol_labels, 'y_label': y_labels
     })
 
+    # Determine color limits from data
+    if probability:
+        low_p = min(probability)
+        high_p = max(probability)
+    else:
+        low_p = 0
+        high_p = 100
+
     # 5. Create Plot
-    mapper = LinearColorMapper(palette=Turbo256, low=0, high=100)
+    mapper = LinearColorMapper(palette=Turbo256, low=low_p, high=high_p)
 
     p = figure(
         title=f"Probability Landscape: P({y_label} | Volume)",
