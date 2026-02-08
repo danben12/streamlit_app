@@ -1183,6 +1183,7 @@ def plot_probability_landscape(vols, values, y_label="Cell Count (N)"):
     probability = []
     droplet_counts = []  # New list for counts
     vol_labels, y_labels = [], []
+    vol_labels_export = [] # New list for CSV export
     # Center coordinates for invisible hit-testing scatter points
     x_centers, y_centers = [], []
 
@@ -1212,12 +1213,16 @@ def plot_probability_landscape(vols, values, y_label="Cell Count (N)"):
                 else: y_centers.append((b+t)/2)
 
                 # Labels
-                exp_l = int(np.log10(l))
-                exp_r = int(np.log10(r))
-                # Use existing helper int_to_superscript
+                exp_l = int(np.round(np.log10(l)))
+                exp_r = int(np.round(np.log10(r)))
+                
+                # Unicode for Plot (Visuals)
                 label_l = f"10{int_to_superscript(exp_l)}"
                 label_r = f"10{int_to_superscript(exp_r)}"
                 vol_labels.append(f"{label_l} - {label_r}")
+
+                # ASCII for CSV (Data)
+                vol_labels_export.append(f"10^{exp_l} - 10^{exp_r}")
 
                 b_int = int(b)
                 y_labels.append(f"{b_int}")
@@ -1291,7 +1296,7 @@ def plot_probability_landscape(vols, values, y_label="Cell Count (N)"):
     # This includes the Droplet Count requested by the user
     # Using 'bottom' for y_label ensures proper sorting numerically in Excel
     df_export = pd.DataFrame({
-        "Volume Range": vol_labels,
+        "Volume Range": vol_labels_export, # Use ASCII list
         y_label: bottom, 
         "Probability (%)": probability,
         "Droplet Count": droplet_counts
