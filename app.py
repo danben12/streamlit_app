@@ -385,7 +385,7 @@ def _occupy_droplets_parallel(trimmed_vol, conc, mean_pix, std_pix, seed):
     raw_biomass = base_biomass + noise
     final_biomass = np.round(raw_biomass)
     final_biomass = np.maximum(final_biomass, 1.0)
-    return final_vols, final_counts, final_biomass
+    return final_vols, final_counts, final_biomass, total_vols
 
 @st.cache_data(show_spinner="Generating population...")
 def generate_population(mean, std, n, conc, mean_pix, std_pix, seed):
@@ -1287,22 +1287,18 @@ def plot_probability_landscape(vols, values, y_label="Cell Count (N)"):
     )
     p.add_tools(hover)
 
-    # Dataframe for export
-    # Recreate tidy table format used in notebook
-    vol_labels_val = [f"10^{int(np.log10(v1))}-10^{int(np.log10(v2))}" for v1, v2 in zip(vol_bins[:-1], vol_bins[1:])]
-    y_labels_val = [str(int(c)) for c in val_bins[:-1]]
+    # Create Tidy DataFrame for export (Long Format)
+    # This includes the Droplet Count requested by the user
+    # Using 'bottom' for y_label ensures proper sorting numerically in Excel
+    df_export = pd.DataFrame({
+        "Volume Range": vol_labels,
+        y_label: bottom, 
+        "Probability (%)": probability,
+        "Droplet Count": droplet_counts
+    })
     
-    # Need to handle empty bins if max_val was 0
-    if max_val == 0:
-         probs_matrix = np.zeros((1, len(vol_labels_val)))
-    else:
-         probs_matrix = probs.T
-
-    df_val = pd.DataFrame(probs_matrix, index=y_labels_val, columns=vol_labels_val)
-    df_val = df_val.dropna(axis=1, how='all').fillna(0)
-    
-    # Return as tidy format for download
-    return p, df_val.reset_index().rename(columns={'index': y_label})
+    # Return p and the Tidy dataframe
+    return p, df_export
 
 def convert_df(df):
     return df.to_csv(index=False).encode('utf-8')
@@ -1611,4 +1607,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
