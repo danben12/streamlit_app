@@ -359,7 +359,7 @@ def render_sidebar():
 # 6. CORE LOGIC
 # ==========================================
 
-@njit(cache=True)
+@njit(cache=False)
 def _generate_volumes_deterministic(n, mean, std, seed):
     np.random.seed(seed)  # Seed controlled by user param
     log_data = np.random.normal(mean, std, int(n))
@@ -368,7 +368,7 @@ def _generate_volumes_deterministic(n, mean, std, seed):
     trimmed_vol = volume_data[mask_vol]
     return trimmed_vol
 
-@njit(cache=True, parallel=True, fastmath=True)
+@njit(cache=False, parallel=True, fastmath=True)
 def _occupy_droplets_parallel(trimmed_vol, conc, mean_pix, std_pix, seed):
     np.random.seed(seed) # Seed controlled by user param
     lambdas = trimmed_vol * conc
