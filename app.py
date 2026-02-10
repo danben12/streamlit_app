@@ -385,12 +385,13 @@ def _occupy_droplets_parallel(trimmed_vol, conc, mean_pix, std_pix, seed):
     raw_biomass = base_biomass + noise
     final_biomass = np.round(raw_biomass)
     final_biomass = np.maximum(final_biomass, 1.0)
-    return final_vols, final_counts, final_biomass, total_vols
+    # FIX: Return 'trimmed_vol' (the argument), not 'total_vols'
+    return final_vols, final_counts, final_biomass, trimmed_vol
 
 @st.cache_data(show_spinner="Generating population...")
 def generate_population(mean, std, n, conc, mean_pix, std_pix, seed):
     total_vols = _generate_volumes_deterministic(n, mean, std, seed)
-    final_vols, final_counts, final_biomass = _occupy_droplets_parallel(total_vols, conc, mean_pix, std_pix, seed)
+    final_vols, final_counts, final_biomass, _ = _occupy_droplets_parallel(total_vols, conc, mean_pix, std_pix, seed)
     return final_vols, final_counts, final_biomass, total_vols
 
 def calculate_vc_and_density(vols, biomass, theoretical_conc, mean_pix):
