@@ -390,7 +390,8 @@ def _occupy_droplets_parallel(trimmed_vol, conc, mean_pix, std_pix, seed):
 @st.cache_data(show_spinner="Generating population...")
 def generate_population(mean, std, n, conc, mean_pix, std_pix, seed):
     total_vols = _generate_volumes_deterministic(n, mean, std, seed)
-    final_vols, final_counts, final_biomass = _occupy_droplets_parallel(total_vols, conc, mean_pix, std_pix, seed)
+    # Add a dummy variable or catch the returned total_vols
+    final_vols, final_counts, final_biomass, _ = _occupy_droplets_parallel(total_vols, conc, mean_pix, std_pix, seed)
     return final_vols, final_counts, final_biomass, total_vols
 
 def calculate_vc_and_density(vols, biomass, theoretical_conc, mean_pix):
@@ -1612,3 +1613,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
