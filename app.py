@@ -359,7 +359,7 @@ def render_sidebar():
 # 6. CORE LOGIC
 # ==========================================
 
-@njit(cache=False)
+@njit(cache=True)
 def _generate_volumes_deterministic(n, mean, std, seed):
     np.random.seed(seed)  # Seed controlled by user param
     log_data = np.random.normal(mean, std, int(n))
@@ -368,7 +368,7 @@ def _generate_volumes_deterministic(n, mean, std, seed):
     trimmed_vol = volume_data[mask_vol]
     return trimmed_vol
 
-@njit(cache=False, parallel=True, fastmath=True)
+@njit(cache=True, parallel=True, fastmath=True)
 def _occupy_droplets_parallel(trimmed_vol, conc, mean_pix, std_pix, seed):
     np.random.seed(seed) # Seed controlled by user param
     lambdas = trimmed_vol * conc
@@ -385,14 +385,12 @@ def _occupy_droplets_parallel(trimmed_vol, conc, mean_pix, std_pix, seed):
     raw_biomass = base_biomass + noise
     final_biomass = np.round(raw_biomass)
     final_biomass = np.maximum(final_biomass, 1.0)
-    # Corrected return: Return input trimmed_vol instead of undefined total_vols
-    return final_vols, final_counts, final_biomass, trimmed_vol
+    return final_vols, final_counts, final_biomass, total_vols
 
 @st.cache_data(show_spinner="Generating population...")
 def generate_population(mean, std, n, conc, mean_pix, std_pix, seed):
     total_vols = _generate_volumes_deterministic(n, mean, std, seed)
-    # Add a dummy variable or catch the returned total_vols
-    final_vols, final_counts, final_biomass, _ = _occupy_droplets_parallel(total_vols, conc, mean_pix, std_pix, seed)
+    final_vols, final_counts, final_biomass = _occupy_droplets_parallel(total_vols, conc, mean_pix, std_pix, seed)
     return final_vols, final_counts, final_biomass, total_vols
 
 def calculate_vc_and_density(vols, biomass, theoretical_conc, mean_pix):
