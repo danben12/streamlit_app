@@ -385,7 +385,8 @@ def _occupy_droplets_parallel(trimmed_vol, conc, mean_pix, std_pix, seed):
     raw_biomass = base_biomass + noise
     final_biomass = np.round(raw_biomass)
     final_biomass = np.maximum(final_biomass, 1.0)
-    return final_vols, final_counts, final_biomass, total_vols
+    # Corrected return: Return input trimmed_vol instead of undefined total_vols
+    return final_vols, final_counts, final_biomass, trimmed_vol
 
 @st.cache_data(show_spinner="Generating population...")
 def generate_population(mean, std, n, conc, mean_pix, std_pix, seed):
@@ -1613,4 +1614,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
