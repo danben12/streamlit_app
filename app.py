@@ -7,6 +7,7 @@ from bokeh.models import ColumnDataSource, HoverTool, Legend, LegendItem, Span, 
 from bokeh.transform import linear_cmap
 from bokeh.palettes import linear_palette, Turbo256
 import colorcet as cc
+from streamlit_bokeh import streamlit_bokeh
 from scipy.stats import linregress
 from bokeh.layouts import column
 import time
@@ -1349,8 +1350,7 @@ def main():
     # 3. CONTROLS (Button Below Metrics)
     col_btn, _ = st.columns([1,2])
     with col_btn:
-        # UPDATED: Replaced use_container_width=True with width="stretch" per logs
-        manual_run = st.button("🚀 Run Simulation", type="primary", width="stretch")
+        manual_run = st.button("🚀 Run Simulation", type="primary", use_container_width=True)
 
     # 4. Logic: Run Simulation
     should_run = manual_run or st.session_state.trigger_run or st.session_state.sim_results is None
@@ -1497,10 +1497,8 @@ def main():
                     st.info("⚪ No Baseline")
                 
                 c_f, c_c = st.columns(2)
-                # UPDATED: Replaced use_container_width=True with width="stretch" per logs
-                c_f.button("❄️ Freeze", on_click=on_freeze_baseline, width="stretch", help="Snapshot current run")
-                # UPDATED: Replaced use_container_width=True with width="stretch" per logs
-                c_c.button("🧹 Clear", on_click=on_clear_baseline, width="stretch", help="Remove snapshot")
+                c_f.button("❄️ Freeze", on_click=on_freeze_baseline, use_container_width=True, help="Snapshot current run")
+                c_c.button("🧹 Clear", on_click=on_clear_baseline, use_container_width=True, help="Remove snapshot")
 
         if data is None or data["N_occupied"] == 0:
             st.info("👋 Welcome! Please configure settings in the sidebar and click **'Run Simulation'** to start.")
@@ -1581,8 +1579,7 @@ def main():
                     st.download_button("📥 Download CSV", data=convert_df(df_download), file_name=file_name, mime="text/csv")
 
                 if p is not None:
-                    # UPDATED: Switched from streamlit_bokeh to st.bokeh_chart and used width="stretch" per logs
-                    st.bokeh_chart(p, use_container_width=True)
+                    streamlit_bokeh(p, use_container_width=True)
 
     with tab_hist:
         st.subheader("Simulation History")
@@ -1598,8 +1595,7 @@ def main():
             selection = st.dataframe(
                 df_hist,
                 key="history_table",
-                # UPDATED: Replaced use_container_width=True with width="stretch" per logs
-                width=1000, 
+                use_container_width=True,
                 hide_index=True,
                 on_select="rerun",
                 selection_mode="single-row"
