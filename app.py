@@ -780,6 +780,11 @@ def plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges, baseline_data=None, s
     p = figure(x_axis_label="Time (h)", y_axis_label=y_label,
                height=800, width=1200, tools="pan,wheel_zoom,reset,save")
     
+    p.xaxis.axis_label_text_font_size = "16pt"
+    p.yaxis.axis_label_text_font_size = "16pt"
+    p.xaxis.major_label_text_font_size = "12pt"  # Tick marks numbers
+    p.yaxis.major_label_text_font_size = "12pt"
+    
     if baseline_data:
         b_sums, b_counts, _, _, b_edges, _, _, _, _, _, _ = baseline_data["sim_output"]
         unique_bins_b = sum(1 for c in b_counts if c > 0)
@@ -828,6 +833,9 @@ def plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges, baseline_data=None, s
     data["Metapopulation_Norm_Biomass"] = meta_norm
     
     legend = Legend(items=legend_items, title="Volume Bins", click_policy="hide")
+    legend.label_text_font_size = "14pt"
+    legend.title_text_font_size = "16pt"
+    legend.title_text_font_style = "bold"
     p.add_layout(legend, 'right')
     
     df = pd.DataFrame(data)
@@ -1613,4 +1621,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
