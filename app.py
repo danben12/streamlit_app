@@ -343,7 +343,7 @@ def render_sidebar():
         if params['model'] in ["Linear Lysis Rate", "Combined Model"]:
             c1, c2 = st.columns(2)
             params['a'] = c1.number_input("Slope (a)", value=st.session_state.get('a', 3.0), key='a')
-            params['b'] = c2.number_input("Intercept (b)", value=st.session_state.get('b', 0.1), key='b')
+            params['b'] = c2.number_input("Intercept (b)", value=st.session_state.get('b', 0.1),format="%.4f", key='b')
 
         if params['model'] == "Linear Lysis Rate":
             params['K_A0'] = st.number_input("K_A0", value=st.session_state.get('K_A0', 10.0), key='K_A0')
@@ -1613,3 +1613,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
