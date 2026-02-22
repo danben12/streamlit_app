@@ -779,7 +779,8 @@ def plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges, baseline_data=None, s
 
     p = figure(x_axis_label="Time (h)", y_axis_label=y_label,
                height=800, width=1200, tools="pan,wheel_zoom,reset,save")
-    
+    p.grid.grid_line_color = "gray"
+    p.grid.grid_line_alpha = 0.4
     p.xaxis.axis_label_text_font_size = "16pt"
     p.yaxis.axis_label_text_font_size = "16pt"
     p.xaxis.major_label_text_font_size = "12pt"  # Tick marks numbers
@@ -1625,6 +1626,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
