@@ -1102,7 +1102,7 @@ def plot_fold_change(vols, initial_biomass, final_biomass, vc_val, sim_mode="Bio
     p.yaxis.axis_label_text_font_size = "18pt"
     p.xaxis.major_label_text_font_size = "16pt"  # Tick marks numbers
     p.yaxis.major_label_text_font_size = "16pt"
-    r_scat = p.scatter('Volume', 'FoldChange', source=source, color='silver', alpha=1, size=4)
+    r_scat = p.scatter('Volume', 'FoldChange', source=source, color='grey', alpha=1, size=4)
     if not df_sub.empty: r_ma = p.line('Volume', 'MovingAverage', source=sub_source, color='red', line_width=3)
     else: r_ma = p.line([], [], color='red')
     min_v, max_v = df_fc['Volume'].min(), df_fc['Volume'].max()
@@ -1628,6 +1628,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
