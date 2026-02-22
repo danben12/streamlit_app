@@ -829,13 +829,13 @@ def plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges, baseline_data=None, s
     total_N0 = total_biomass_traj[0]
     meta_norm = total_biomass_traj / total_N0 if total_N0 > 1e-9 else total_biomass_traj
     r_meta = p.line(t_eval, meta_norm, line_color="black", line_width=4,
-                    line_dash="solid", alpha=1.0)
+                    line_dash="dashed", alpha=1.0)
     legend_items.insert(0, ("Metapopulation (Avg)", [r_meta]))
     data["Metapopulation_Norm_Biomass"] = meta_norm
     
     legend = Legend(items=legend_items, title="Volume Bins", click_policy="hide")
-    legend.label_text_font_size = "14pt"
-    legend.title_text_font_size = "16pt"
+    legend.label_text_font_size = "16pt"
+    legend.title_text_font_size = "18pt"
     legend.title_text_font_style = "bold"
     p.add_layout(legend, 'right')
     df = pd.DataFrame(data)
@@ -1626,6 +1626,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
