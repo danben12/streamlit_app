@@ -781,10 +781,10 @@ def plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges, baseline_data=None, s
                height=800, width=1200, tools="pan,wheel_zoom,reset,save")
     p.grid.grid_line_color = "gray"
     p.grid.grid_line_alpha = 0.4
-    p.xaxis.axis_label_text_font_size = "16pt"
-    p.yaxis.axis_label_text_font_size = "16pt"
-    p.xaxis.major_label_text_font_size = "12pt"  # Tick marks numbers
-    p.yaxis.major_label_text_font_size = "12pt"
+    p.xaxis.axis_label_text_font_size = "18pt"
+    p.yaxis.axis_label_text_font_size = "18pt"
+    p.xaxis.major_label_text_font_size = "16pt"  # Tick marks numbers
+    p.yaxis.major_label_text_font_size = "16pt"
     
     if baseline_data:
         b_sums, b_counts, _, _, b_edges, _, _, _, _, _, _ = baseline_data["sim_output"]
@@ -1626,6 +1626,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
