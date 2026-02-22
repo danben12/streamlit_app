@@ -828,7 +828,7 @@ def plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges, baseline_data=None, s
     total_biomass_traj = np.sum(bin_sums, axis=0)
     total_N0 = total_biomass_traj[0]
     meta_norm = total_biomass_traj / total_N0 if total_N0 > 1e-9 else total_biomass_traj
-    r_meta = p.line(t_eval, meta_norm, line_color="white", line_width=4,
+    r_meta = p.line(t_eval, meta_norm, line_color="black", line_width=4,
                     line_dash="solid", alpha=1.0)
     legend_items.insert(0, ("Metapopulation (Avg)", [r_meta]))
     data["Metapopulation_Norm_Biomass"] = meta_norm
@@ -1626,6 +1626,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
