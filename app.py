@@ -837,7 +837,7 @@ def plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges, baseline_data=None, s
     legend.title_text_font_size = "16pt"
     legend.title_text_font_style = "bold"
     p.add_layout(legend, 'right')
-    
+    p.background_fill_color = "white"
     df = pd.DataFrame(data)
     return p, df
 
@@ -1626,6 +1626,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
