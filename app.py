@@ -1096,17 +1096,19 @@ def plot_fold_change(vols, initial_biomass, final_biomass, vc_val, sim_mode="Bio
     p = figure(x_axis_type='log', y_axis_type='linear',
                x_axis_label='Volume (μm³)', y_axis_label=y_label,
                width=1200, height=800, y_range=(-7, 9), output_backend="webgl", tools="pan,wheel_zoom,reset,save")
-    p.xaxis.axis_label_text_font_size = "16pt"
-    p.yaxis.axis_label_text_font_size = "16pt"
-    p.xaxis.major_label_text_font_size = "12pt"  # Tick marks numbers
-    p.yaxis.major_label_text_font_size = "12pt"
-    r_scat = p.scatter('Volume', 'FoldChange', source=source, color='silver', alpha=0.6, size=4)
+    p.grid.grid_line_color = "gray"
+    p.grid.grid_line_alpha = 0.4
+    p.xaxis.axis_label_text_font_size = "18pt"
+    p.yaxis.axis_label_text_font_size = "18pt"
+    p.xaxis.major_label_text_font_size = "16pt"  # Tick marks numbers
+    p.yaxis.major_label_text_font_size = "16pt"
+    r_scat = p.scatter('Volume', 'FoldChange', source=source, color='silver', alpha=1, size=4)
     if not df_sub.empty: r_ma = p.line('Volume', 'MovingAverage', source=sub_source, color='red', line_width=3)
     else: r_ma = p.line([], [], color='red')
     min_v, max_v = df_fc['Volume'].min(), df_fc['Volume'].max()
-    r_meta = p.line([min_v, max_v], [meta_fc, meta_fc], color='white', line_width=3)
-    r_base = p.line([min_v, max_v], [0, 0], color='white', line_dash='dashdot', line_width=3)
-    r_vc = p.line([vc_val, vc_val], [-10, 10], color='white', line_dash='dashed', line_width=3)
+    r_meta = p.line([min_v, max_v], [meta_fc, meta_fc], color='black', line_width=3)
+    r_base = p.line([min_v, max_v], [0, 0], color='black', line_dash='dashdot', line_width=3)
+    r_vc = p.line([vc_val, vc_val], [-10, 10], color='black', line_dash='dashed', line_width=3)
     p.add_tools(HoverTool(tooltips=[('Volume', '@Volume{0,0}'), ('Fold Change', '@FoldChange{0.00}'), ('ID', '@DropletID')], renderers=[r_scat]))
     legend = Legend(items=[
         LegendItem(label='Droplet FC', renderers=[r_scat]),
@@ -1115,8 +1117,8 @@ def plot_fold_change(vols, initial_biomass, final_biomass, vc_val, sim_mode="Bio
         LegendItem(label='Vc', renderers=[r_vc]),
         LegendItem(label='Baseline (0)', renderers=[r_base])
     ], location='top_right')
-    legend.label_text_font_size = "14pt"
-    legend.title_text_font_size = "16pt"
+    legend.label_text_font_size = "16pt"
+    legend.title_text_font_size = "18pt"
     legend.title_text_font_style = "bold"
     p.add_layout(legend, 'right')
     return p, df_fc
@@ -1626,6 +1628,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
