@@ -780,7 +780,7 @@ def plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges, baseline_data=None, s
     p = figure(x_axis_label="Time (h)", y_axis_label=y_label,
                height=1600, width=2400, tools="pan,wheel_zoom,reset,save")
     
-        p.xaxis.axis_label_text_color = "black"
+    p.xaxis.axis_label_text_color = "black"
     p.yaxis.axis_label_text_color = "black"
     p.xaxis.major_label_text_color = "black"
     p.yaxis.major_label_text_color = "black"
@@ -1648,6 +1648,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
