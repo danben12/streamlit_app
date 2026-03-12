@@ -802,6 +802,14 @@ def plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges, baseline_data=None, s
     p.yaxis.major_tick_out = 20
     p.xaxis.minor_tick_out = 10
     p.yaxis.minor_tick_out = 10
+
+    p.xaxis.axis_line_color = "black"
+    p.yaxis.axis_line_color = "black"
+
+    p.xaxis.major_tick_line_color = "black"
+    p.xaxis.minor_tick_line_color = "black"
+    p.yaxis.major_tick_line_color = "black"
+    p.yaxis.minor_tick_line_color = "black"
     
     if baseline_data:
         b_sums, b_counts, _, _, b_edges, _, _, _, _, _, _ = baseline_data["sim_output"]
@@ -1648,6 +1656,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
