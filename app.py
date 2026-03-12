@@ -778,7 +778,7 @@ def plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges, baseline_data=None, s
         y_label = "Normalized Cell Count (N/N₀)"
 
     p = figure(x_axis_label="Time (h)", y_axis_label=y_label,
-               height=1600, width=2400, tools="pan,wheel_zoom,reset,save")
+               height=3200, width=4800, tools="pan,wheel_zoom,reset,save")
     
     p.xaxis.axis_label_text_font_size = "48pt"
     p.yaxis.axis_label_text_font_size = "48pt"
@@ -1626,6 +1626,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
