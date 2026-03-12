@@ -1592,7 +1592,7 @@ def main():
                     st.download_button("📥 Download CSV", data=convert_df(df_download), file_name=file_name, mime="text/csv")
 
                 if p is not None:
-                    streamlit_bokeh(p, use_container_width=True)
+                    streamlit_bokeh(p, use_container_width=False)
 
     with tab_hist:
         st.subheader("Simulation History")
@@ -1626,6 +1626,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
