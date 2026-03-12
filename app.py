@@ -778,12 +778,30 @@ def plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges, baseline_data=None, s
         y_label = "Normalized Cell Count (N/N₀)"
 
     p = figure(x_axis_label="Time (h)", y_axis_label=y_label,
-               height=800, width=1200, tools="pan,wheel_zoom,reset,save")
+               height=1600, width=2400, tools="pan,wheel_zoom,reset,save")
     
-    p.xaxis.axis_label_text_font_size = "16pt"
-    p.yaxis.axis_label_text_font_size = "16pt"
-    p.xaxis.major_label_text_font_size = "12pt"  # Tick marks numbers
-    p.yaxis.major_label_text_font_size = "12pt"
+        p.xaxis.axis_label_text_color = "black"
+    p.yaxis.axis_label_text_color = "black"
+    p.xaxis.major_label_text_color = "black"
+    p.yaxis.major_label_text_color = "black"
+
+    # --- Font Sizes ---
+    p.xaxis.axis_label_text_font_size = "96pt"
+    p.yaxis.axis_label_text_font_size = "96pt"
+    p.xaxis.major_label_text_font_size = "86pt"
+    p.yaxis.major_label_text_font_size = "86pt"
+
+    # --- Axis Lines & Ticks ---
+    p.xaxis.axis_line_width = 4
+    p.yaxis.axis_line_width = 4
+    p.xaxis.major_tick_line_width = 4
+    p.yaxis.major_tick_line_width = 4
+    p.xaxis.minor_tick_line_width = 4
+    p.yaxis.minor_tick_line_width = 4
+    p.xaxis.major_tick_out = 20
+    p.yaxis.major_tick_out = 20
+    p.xaxis.minor_tick_out = 10
+    p.yaxis.minor_tick_out = 10
     
     if baseline_data:
         b_sums, b_counts, _, _, b_edges, _, _, _, _, _, _ = baseline_data["sim_output"]
@@ -833,8 +851,12 @@ def plot_dynamics(t_eval, bin_sums, bin_counts, bin_edges, baseline_data=None, s
     data["Metapopulation_Norm_Biomass"] = meta_norm
     
     legend = Legend(items=legend_items, title="Volume Bins", click_policy="hide")
-    legend.label_text_font_size = "14pt"
-    legend.title_text_font_size = "16pt"
+    p.legend.label_text_font_size = "40pt"
+    p.legend.label_text_color = "black"  # Set legend font color to black
+    p.legend.glyph_width = 80
+    p.legend.glyph_height = 40
+    p.legend.spacing = 20
+    p.legend.padding = 20
     legend.title_text_font_style = "bold"
     p.add_layout(legend, 'right')
     
@@ -1626,6 +1648,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
